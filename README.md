@@ -33,4 +33,4 @@ El sistema HMI de BoMax cuenta con tres niveles de acceso, cada uno con permisos
 * **Fallo en la comunicación MQTT (Latencia > 1s):** Verificar la salida a internet de la red Wi-Fi del hospital, ya que el servidor HiveMQ requiere conexión externa por el puerto 8883.
 * **Sistema congelado en la HMI:** Si la memoria RAM se satura por exceso de registros, se debe ejecutar el reinicio controlado del flujo y verificar el límite de buffer de entrada.
 * **Fallo en el reconocimiento de habitaciones:** Limpiar el lente de la cámara Raspberry Pi v2 y asegurar que la iluminación del pasillo hospitalario no genere reflejos que saturen los umbrales de OpenCV.
-* **El robot no evade obstáculos:** Verificar la conexión física a 5V de los sensores ultrasónicos HC-SR04.
+* **El robot no se detiene ante obstaculos:** Verificar la conexión física a 5V de los sensores ultrasónicos HC-SR04.
