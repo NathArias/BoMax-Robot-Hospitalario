@@ -1,0 +1,1786 @@
+[
+    {
+        "id": "ff57012727d19470",
+        "type": "tab",
+        "label": "BoMax HMI",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "aafdaefa03ee6b73",
+        "type": "group",
+        "z": "ff57012727d19470",
+        "style": {
+            "stroke": "#999999",
+            "stroke-opacity": "1",
+            "fill": "none",
+            "fill-opacity": "1",
+            "label": true,
+            "label-position": "nw",
+            "color": "#a4a4a4"
+        },
+        "nodes": [
+            "f09e9d2e89dbcf7b"
+        ],
+        "x": 14,
+        "y": 99,
+        "w": 212,
+        "h": 82
+    },
+    {
+        "id": "45bd35e364010c7d",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "Movimiento robot",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 130,
+        "y": 360,
+        "wires": [
+            [
+                "010ad3958701ee50"
+            ]
+        ]
+    },
+    {
+        "id": "010ad3958701ee50",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Movimiento robot",
+        "func": "// --- INICIALIZACIÓN ---\nif (!context.get('init')) {\n    context.set('init', true);\n    context.set('pos', 0);\n    context.set('dir', 1);\n    context.set('estado', 'STANDBY');\n    context.set('bateria', 100); // Empezamos al 100% para simular REQ-OP-002\n    context.set('entregas', 0);\n    context.set('destino_idx', 0);\n    context.set('timer', 0);\n}\n\n// --- VARIABLES ---\nlet pos = context.get('pos');\nlet dir = context.get('dir');\nlet bateria = context.get('bateria');\nlet estado = context.get('estado');\nlet entregas = context.get('entregas');\nlet destino_idx = context.get('destino_idx');\nlet timer = context.get('timer') + 1;\n\n// --- CONFIGURACIÓN DE RUTA ---\nconst destinos = [150, 350, 550]; // cm\nconst nombres = ['Habitación 1','Habitación 2','Habitación 3'];\nconst MAX_POS = 580;\n\n// --- LÓGICA DE ESTADOS ---\nif (estado === 'STANDBY') {\n    if (timer > 3) { estado = 'EN_RUTA'; timer = 0; }\n    \n} else if (estado === 'EN_RUTA') {\n    let target = destinos[destino_idx];\n    let dx = target - pos;\n    \n    // ✅ REQ-OP-003: Velocidad operativa 5 cm/s (±10%)\n    // Ajustado de 6 a 5 para cumplir especificación\n    if (Math.abs(dx) > 5) {\n        pos += 5 * (dx > 0 ? 1 : -1);\n        \n        // Simular evasión aleatoria (RIEGO-03)\n        if (Math.random() < 0.05) { \n            estado = 'EVASION'; \n            timer = 0; \n        }\n    } else {\n        pos = target;\n        estado = 'VERIFICACION';\n        timer = 0;\n    }\n    \n} else if (estado === 'EVASION') {\n    if (timer > 3) { estado = 'EN_RUTA'; timer = 0; }\n    \n} else if (estado === 'VERIFICACION') {\n    if (timer > 2) { estado = 'ENTREGADO'; timer = 0; }\n    \n} else if (estado === 'ENTREGADO') {\n    entregas++;\n    destino_idx++;\n    if (destino_idx < destinos.length) { \n        estado = 'EN_RUTA'; \n    } else { \n        estado = 'RETORNO'; \n    }\n    timer = 0;\n    \n} else if (estado === 'RETORNO') {\n    if (pos > 6) { pos -= 5; } // Velocidad retorno también 5 cm/s\n    else { \n        pos = 0; \n        estado = 'STANDBY'; \n        entregas = 0; \n        destino_idx = 0; \n        timer = 0; \n    }\n}\n\n// --- SIMULACIÓN DE SENSORES Y BATERÍA ---\n// ✅ REQ-OP-002: Batería (simulamos drenaje lento)\nif (Math.random() < 0.02) bateria = Math.max(0, bateria - 0.5);\n\n// ✅ RIESGO-03: Sensores (permitimos valores <20cm para activar alertas)\n// Antes: Math.max(20, ...) -> Ahora: Math.max(5, ...) para simular obstáculos reales\n// --- NUEVA LÓGICA DE SENSORES (Para probar alertas) ---\n// --- SENSORES: Priorizar datos reales si existen ---\nlet frontal;\nlet usarReal = global.get(\"usarDistanciaReal\") || false;\n\nif (usarReal) {\n    // Usar distancia real de la ESP32\n    frontal = global.get(\"distanciaFrontalReal\") || 100;\n} else {\n    // Simular (para cuando no hay ESP32 conectada)\n    if (Math.random() < 0.2) {\n        frontal = Math.floor(Math.random() * 15) + 5;\n    } else {\n        frontal = Math.floor(Math.random() * 150) + 30;\n    }\n}\n\nlet lat_izq = Math.max(10, Math.min(50, 30 + Math.round((Math.random() - 0.5) * 20)));\nlet lat_der = Math.max(10, Math.min(50, 30 + Math.round((Math.random() - 0.5) * 20)));\n// Guardar contexto\ncontext.set('pos', pos);\ncontext.set('bateria', bateria);\ncontext.set('estado', estado);\ncontext.set('entregas', entregas);\ncontext.set('destino_idx', destino_idx);\ncontext.set('timer', timer);\n\n// --- SALIDA PAYLOAD ---\nconst destino_actual = destino_idx < nombres.length ? nombres[destino_idx] : 'Base';\nconst robot_pct = Math.round((pos / MAX_POS) * 100);\n\nmsg.payload = {\n    // Datos de navegación\n    pos: Math.round(pos), \n    estado: estado, \n    bateria: Math.round(bateria),\n    entregas: entregas, \n    destino: destino_actual,\n    robot_pct: robot_pct,\n    \n    // ✅ Sensores (Crucial para el nodo de Alertas)\n    frontal: frontal,\n    lat_izq: lat_izq,\n    lat_der: lat_der,\n    distancia: frontal // 👈 AGREGADO: Para que tu nodo \"Verificar Alertas\" lo lea\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 380,
+        "wires": [
+            [
+                "5ed02ce9dbe7f945",
+                "5438c9f653ba5360",
+                "f053ce6e1cbba1e8"
+            ]
+        ]
+    },
+    {
+        "id": "5ed02ce9dbe7f945",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "→ estado+bateria",
+        "func": "// Actualizar distancia frontal\nif (msg.topic === \"sensores_distancia\") {\n    msg.payload = {\n        frontal: msg.payload.frontal || msg.payload.frontal === 0 ? msg.payload.frontal + \" cm\" : \"--\",\n        izquierda: msg.payload.izquierda || \"--\",\n        derecha: msg.payload.derecha || \"--\"\n    };\n    return msg;\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 930,
+        "y": 380,
+        "wires": [
+            [
+                "5e9c2d0888a2afb5"
+            ]
+        ]
+    },
+    {
+        "id": "5438c9f653ba5360",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "→ mapa",
+        "func": "return msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 440,
+        "wires": [
+            [
+                "5e9c2d0888a2afb5"
+            ]
+        ]
+    },
+    {
+        "id": "c0e2a086f0ee77a9",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "ui_group_estado",
+        "name": "Cards estado",
+        "order": 2,
+        "width": "9",
+        "height": "2",
+        "format": "<div style=\"font-family:Arial,sans-serif;padding:4px\">\n    <div style=\"background:white;border-radius:8px;padding:15px;border-left:4px solid {{getColor(msg.payload.estado)}};box-shadow:0 1px 4px rgba(0,0,0,0.1)\">\n        <div style=\"font-size:10px;color:#7f8c8d;text-transform:uppercase;margin-bottom:4px\">Estado del Robot</div>\n        <div style=\"font-size:20px;font-weight:bold;color:{{getColor(msg.payload.estado)}}\">{{msg.payload.estado}}</div>\n        <div style=\"font-size:11px;color:#555;margin-top:4px\">\n            <span ng-if=\"msg.payload.habitacion_actual\">📍 {{msg.payload.habitacion_actual}}</span>\n            <span ng-if=\"msg.payload.objeto_visto\"> | {{msg.payload.objeto_visto}}</span>\n        </div>\n    </div>\n</div>\n\n<script>\n(function(scope) {\n    scope.getColor = function(estado) {\n        if (!estado) return '#95a5a6';\n        const colores = {\n            'EN_RUTA': '#3498db',\n            'ENTREGADO': '#27ae60',\n            'STANDBY': '#95a5a6',\n            'RETORNO': '#9b59b6',\n        };\n        return colores[estado.toUpperCase()] || '#95a5a6';\n    };\n})(scope);\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 670,
+        "y": 740,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "5e9c2d0888a2afb5",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "ui_group_mapa",
+        "name": "Mapa pasillo",
+        "order": 2,
+        "width": "14",
+        "height": "10",
+        "format": "<div style=\"padding:8px;font-family:Arial,sans-serif\">\n\n  <!-- Selector entorno -->\n  <div style=\"margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap\">\n    <label style=\"font-size:12px;color:#555;font-weight:bold\">Entorno:</label>\n    <select ng-model=\"entorno\" ng-init=\"entorno=mapaActual\"\n          ng-disabled=\"esOperador\"\n          style=\"padding:5px 10px;border:1px solid #ddd;border-radius:4px;font-size:12px;background:#fff;\"\n          ng-style=\"{'opacity': esOperador ? '0.6' : '1', 'cursor': esOperador ? 'not-allowed' : 'pointer'}\">\n          <option value=\"pasillo_recto\">🏥 Pasillo Recto — Traumatología</option>\n          <option value=\"pasillo_l\">🔄 Pasillo en L — Pediatría</option>\n          <option value=\"pasillo_bifurcacion\">⑂ Bifurcación — Medicina Interna</option>\n      </select>\n    <span style=\"font-size:11px;color:#888;margin-left:auto\">\n      📍 <b>{{msg.payload.pos}} cm</b> &nbsp;|&nbsp;\n      Frontal: <b style=\"color:{{msg.payload.frontal < 30 ? '#e74c3c' : msg.payload.frontal < 60 ? '#e67e22' : '#27ae60'}}\">{{msg.payload.frontal}} cm</b>\n    </span>\n  </div>\n\n  <!-- PASILLO RECTO - TRAUMATOLOGÍA (HORIZONTAL) -->\n  <div ng-if=\"entorno=='pasillo_recto'\" style=\"position:relative;\n              width:100%;\n              height:450px;\n              background:#f0f3f4;\n              border-radius:8px;\n              border:1px solid #dce3e8\">\n\n    <!-- PASILLO PRINCIPAL -->\n    <div style=\"\n          position:absolute;\n          top:180px;\n          left:80px;\n          width:620px;\n          height:60px;\n          background:white;\n          border:1.5px solid #bdc3c7;\n          border-radius:4px\">\n    </div>\n\n    <!-- H2 - ARRIBA -->\n    <div style=\"\n          position:absolute;\n          top:60px;\n          left:300px;\n          width:60px;\n          height:120px;\n          background:white;\n          border:1.5px solid #bdc3c7;\n          border-radius:4px\">\n    </div>\n\n    <!-- H3 - ARRIBA -->\n    <div style=\"\n          position:absolute;\n          top:60px;\n          left:500px;\n          width:60px;\n          height:120px;\n          background:white;\n          border:1.5px solid #bdc3c7;\n          border-radius:4px\">\n    </div>\n    <!-- H1 -->\n    <div style=\"\n          position:absolute;\n          top:240px;\n          left:250px;\n          width:60px;\n          height:180px;\n          background:white;\n          border:1.5px solid #bdc3c7;\n          border-top:none;\n          border-radius:0 0 4px 4px\">\n</div>\n\n\n    <!-- BASE -->\n    <div style=\"\n          position:absolute;\n          left:95px;\n          top:155px;\n          font-size:11px;\n          color:#7f8c8d;\n          font-weight:bold\">\n      BASE\n    </div>\n\n    <!-- H2 - AZUL -->\n    <div style=\"\n          position:absolute;\n          left:330px;\n          top:35px;\n          transform:translateX(-50%);\n          background:#3498db;\n          color:white;\n          border-radius:3px;\n          padding:2px 8px;\n          font-size:10px;\n          font-weight:bold\">\n      H2<small style=\"display:block;font-size:8px\">120 cm</small>\n    </div>\n\n    <!-- H3 - VERDE -->\n    <div style=\"\n          position:absolute;\n          left:530px;\n          top:35px;\n          transform:translateX(-50%);\n          background:#27ae60;\n          color:white;\n          border-radius:3px;\n          padding:2px 8px;\n          font-size:10px;\n          font-weight:bold\">\n      H3<small style=\"display:block;font-size:8px\">120 cm</small>\n    </div>\n\n    <!-- H1 - AMARILLO (POSICIÓN AJUSTADA - DEBAJO DE H2) -->\n    <div style=\"\n          position:absolute;\n          left:330px;\n          top:350px;\n          transform:translateX(-50%);\n          background:#f1c40f;\n          color:white;\n          border-radius:3px;\n          padding:2px 8px;\n          font-size:10px;\n          font-weight:bold\">\n      H1<small style=\"display:block;font-size:8px\">125 cm</small>\n    </div>\n\n    <!-- PUNTO AZUL DEL ROBOT -->\n    <div style=\"\n          position:absolute;\n          left:140px;\n          top:210px;\n          width:18px;\n          height:18px;\n          background:#2980b9;\n          border-radius:50%;\n          border:3px solid #1a5276;\n          box-shadow:0 0 10px rgba(41,128,185,0.7)\">\n    </div>\n\n    <!-- MEDIDAS -->\n    <div style=\"position:absolute;left:170px;top:155px;font-size:10px;color:#95a5a6\">\n      230 cm\n    </div>\n\n    <div style=\"position:absolute;left:320px;top:110px;font-size:10px;color:#95a5a6\">\n      120 cm\n    </div>\n\n    <div style=\"position:absolute;left:520px;top:110px;font-size:10px;color:#95a5a6\">\n      120 cm\n    </div>\n\n    <div style=\"position:absolute;left:370px;top:260px;font-size:10px;color:#95a5a6\">\n      125 cm\n    </div>\n\n    <div style=\"position:absolute;left:770px;top:210px;font-size:10px;color:#95a5a6\">\n      370 cm\n    </div>\n\n    <!-- LEYENDA -->\n    <div style=\"\n          position:absolute;\n          bottom:10px;\n          left:10px;\n          font-size:9px;\n          color:#95a5a6\">\n      🏥 Traumatología — Mapa Horizontal\n    </div>\n\n  </div>\n  <!-- PASILLO EN L -->\n  <div ng-if=\"entorno=='pasillo_l'\"\n    style=\"position:relative;width:100%;height:200px;background:#f0f3f4;border-radius:8px;border:1px solid #dce3e8\">\n    <div\n      style=\"position:absolute;top:40px;left:20px;width:60%;height:42px;background:white;border:1.5px solid #bdc3c7;border-right:none\">\n    </div>\n    <div\n      style=\"position:absolute;top:40px;left:calc(20px + 60%);width:42px;height:140px;background:white;border:1.5px solid #bdc3c7\">\n    </div>\n    <div style=\"position:absolute;top:54px;left:26px;font-size:9px;color:#7f8c8d;font-weight:bold\">BASE</div>\n    <div style=\"position:absolute;top:40px;left:25%;width:2px;height:42px;background:#e74c3c\"></div>\n    <div\n      style=\"position:absolute;top:24px;left:25%;transform:translateX(-50%);background:#e74c3c;color:white;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:bold\">\n      H1</div>\n    <div style=\"position:absolute;top:40px;left:52%;width:2px;height:42px;background:#2980b9\"></div>\n    <div\n      style=\"position:absolute;top:24px;left:52%;transform:translateX(-50%);background:#2980b9;color:white;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:bold\">\n      H2</div>\n    <div style=\"position:absolute;top:130px;left:calc(20px + 60%);width:42px;height:2px;background:#27ae60\"></div>\n    <div\n      style=\"position:absolute;top:118px;left:calc(22px + 60% + 42px);background:#27ae60;color:white;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:bold\">\n      H3</div>\n    <div\n      style=\"position:absolute;width:18px;height:18px;background:#2980b9;border-radius:50%;border:3px solid #1a5276;transform:translate(-50%,-50%);transition:all 0.4s ease;box-shadow:0 0 10px rgba(41,128,185,0.7)\"\n      ng-style=\"msg.payload.pos < 350 ? {left:(22+msg.payload.pos*0.165)+'px', top:'61px'} : {left:'calc(20px + 60%)', top:(61+(msg.payload.pos-350)*0.2)+'px'}\">\n    </div>\n    <div style=\"position:absolute;bottom:4px;left:16px;font-size:9px;color:#95a5a6\">Pediatría — Pasillo en L</div>\n  </div>\n\n  <!-- BIFURCACIÓN -->\n  <div ng-if=\"entorno=='pasillo_bifurcacion'\"\n    style=\"position:relative;width:100%;height:220px;background:#f0f3f4;border-radius:8px;border:1px solid #dce3e8\">\n    <div style=\"position:absolute;top:88px;left:2%;width:50%;height:42px;background:white;border:1.5px solid #bdc3c7\">\n    </div>\n    <div style=\"position:absolute;top:18px;left:51%;width:4%;height:112px;background:white;border:1.5px solid #bdc3c7\">\n    </div>\n    <div\n      style=\"position:absolute;top:18px;left:54%;width:42%;height:42px;background:white;border:1.5px solid #bdc3c7;border-left:none\">\n    </div>\n    <div\n      style=\"position:absolute;top:148px;left:54%;width:42%;height:42px;background:white;border:1.5px solid #bdc3c7;border-left:none\">\n    </div>\n    <div style=\"position:absolute;top:103px;left:3%;font-size:9px;color:#7f8c8d;font-weight:bold\">BASE</div>\n    <div style=\"position:absolute;top:88px;left:27%;width:2px;height:42px;background:#e74c3c\"></div>\n    <div\n      style=\"position:absolute;top:72px;left:27%;transform:translateX(-50%);background:#e74c3c;color:white;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:bold\">\n      H1</div>\n    <div style=\"position:absolute;top:18px;left:76%;width:2px;height:42px;background:#2980b9\"></div>\n    <div\n      style=\"position:absolute;top:4px;left:76%;transform:translateX(-50%);background:#2980b9;color:white;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:bold\">\n      H2</div>\n    <div style=\"position:absolute;top:148px;left:76%;width:2px;height:42px;background:#27ae60\"></div>\n    <div\n      style=\"position:absolute;top:192px;left:76%;transform:translateX(-50%);background:#27ae60;color:white;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:bold\">\n      H3</div>\n    <div\n      style=\"position:absolute;width:18px;height:18px;background:#2980b9;border-radius:50%;border:3px solid #1a5276;transform:translate(-50%,-50%);transition:left 0.4s ease;box-shadow:0 0 10px rgba(41,128,185,0.7)\"\n      ng-style=\"{left:(4+msg.payload.pos*0.088)+'%', top:'109px'}\"></div>\n    <div style=\"position:absolute;bottom:4px;left:16px;font-size:9px;color:#95a5a6\">Medicina Interna — Bifurcación</div>\n  </div>\n\n  <!-- SENSORES -->\n  <div style=\"margin-top:10px;display:flex;gap:8px;flex-wrap:wrap\">\n    <div style=\"font-size:11px;background:white;padding:5px 12px;border-radius:20px;border:1px solid #ddd\">\n      🔴 Frontal:\n      <b style=\"color:{{msg.payload.frontal < 30 ? '#e74c3c' : msg.payload.frontal < 60 ? '#e67e22' : '#27ae60'}}\">{{msg.payload.frontal}} cm</b>\n    </div>\n    <div style=\"font-size:11px;background:white;padding:5px 12px;border-radius:20px;border:1px solid #ddd\">\n      ◀ Izq: <b>{{msg.payload.lat_izq}} cm</b>\n    </div>\n    <div style=\"font-size:11px;background:white;padding:5px 12px;border-radius:20px;border:1px solid #ddd\">\n      ▶ Der: <b>{{msg.payload.lat_der}} cm</b>\n    </div>\n  </div>\n\n  <!-- Script para inicializar rol y mapa -->\n  <script>\n    (function(scope) {\n      // Obtener rol desde localStorage\n      const auth = JSON.parse(localStorage.getItem('bomax_auth') || '{}');\n      scope.rol = auth.rol || 'Operador';\n      scope.esOperador = (scope.rol === 'Operador');\n      \n      // Cargar mapa guardado o usar default\n      scope.mapaActual = localStorage.getItem('bomax_mapa') || 'pasillo_recto';\n      scope.entorno = scope.mapaActual;\n      \n      // Watch para guardar cambios de mapa (solo si NO es operador)\n      scope.$watch('entorno', function(nuevo, viejo) {\n        if (nuevo && nuevo !== viejo && !scope.esOperador) {\n          localStorage.setItem('bomax_mapa', nuevo);\n          console.log('[Mapa] Guardado:', nuevo, 'por', scope.rol);\n        }\n      });\n      \n    })(scope);\n  </script>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1210,
+        "y": 400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "de42ed8f1be60986",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "ui_group_mision",
+        "name": "Formulario nueva misión",
+        "order": 3,
+        "width": "8",
+        "height": "18",
+        "format": "<div style=\"padding:14px;font-family:Arial,sans-serif\">\n    <div style=\"font-size:11px;font-weight:bold;color:#7f8c8d;margin-bottom:14px;text-transform:uppercase\">\n        Nueva Misión - Carga de Medicamentos\n    </div>\n\n    <!-- ENCARGADO -->\n    <div style=\"margin-bottom:12px\">\n        <label style=\"font-size:12px;color:#2c3e50;font-weight:bold;display:block;margin-bottom:5px\">\n            👨‍⚕️ Nombre del Encargado *\n        </label>\n        <select ng-model=\"formData.encargado\"\n            style=\"width:100%;padding:8px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box;background:white\">\n            <option value=\"\" disabled selected>— Seleccionar enfermero —</option>\n            <option value=\"Enf. Samuel Guzman\">👨‍⚕️ Enf. Samuel Guzman</option>\n            <option value=\"Enf. Samuel Barrios\">👨‍⚕️ Enf. Samuel Barrios</option>\n            <option value=\"Enf. Jorge Salgueiro\">👨‍⚕️ Enf. Jorge Salgueiro</option>\n            <option value=\"Enf. Camila Monje\">👩‍⚕️ Enf. Camila Monje</option>\n            <option value=\"Enf. Nathaly Arias\">👩‍⚕️ Enf. Nathaly Arias</option>\n        </select>\n    </div>\n\n    <!-- NÚMERO DE HABITACIONES -->\n    <div style=\"margin-bottom:12px\">\n        <label style=\"font-size:12px;color:#2c3e50;font-weight:bold;display:block;margin-bottom:5px\">\n            🏥 Habitaciones a Visitar *\n        </label>\n        <div style=\"display:flex;gap:10px\">\n            <button ng-click=\"setNumHabitaciones(1)\" \n                ng-class=\"{'btn-primary': formData.num_habitaciones === 1, 'btn-secondary': formData.num_habitaciones !== 1}\"\n                style=\"flex:1;padding:10px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:13px\">\n                1 Habitación\n            </button>\n            <button ng-click=\"setNumHabitaciones(2)\"\n                ng-class=\"{'btn-primary': formData.num_habitaciones === 2, 'btn-secondary': formData.num_habitaciones !== 2}\"\n                style=\"flex:1;padding:10px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:13px\">\n                2 Habitaciones\n            </button>\n            <button ng-click=\"setNumHabitaciones(3)\"\n                ng-class=\"{'btn-primary': formData.num_habitaciones === 3, 'btn-secondary': formData.num_habitaciones !== 3}\"\n                style=\"flex:1;padding:10px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:13px\">\n                3 Habitaciones\n            </button>\n        </div>\n    </div>\n\n    <!-- SELECCIÓN DE HABITACIONES -->\n    <div ng-if=\"formData.num_habitaciones\" style=\"margin-bottom:12px;padding:10px;background:#f8f9fa;border-radius:6px\">\n        <label style=\"font-size:12px;color:#2c3e50;font-weight:bold;display:block;margin-bottom:8px\">\n            📍 Secuencia de Habitaciones:\n        </label>\n        \n        <div ng-if=\"formData.num_habitaciones === 1\">\n            <select ng-model=\"formData.habitaciones\"\n                style=\"width:100%;padding:8px;border:1.5px solid #ddd;border-radius:6px;font-size:13px\">\n                <option value=\"\">— Seleccionar Habitación —</option>\n                <option value=\"h1\">🟡 Habitación 1 (H1)</option>\n                <option value=\"h2\">🔵 Habitación 2 (H2)</option>\n                <option value=\"h3\">🟢 Habitación 3 (H3)</option>\n            </select>\n        </div>\n\n        <div ng-if=\"formData.num_habitaciones === 2\">\n            <select ng-model=\"formData.habitaciones\"\n                style=\"width:100%;padding:8px;border:1.5px solid #ddd;border-radius:6px;font-size:13px\">\n                <option value=\"\">— Seleccionar Secuencia —</option>\n                <option value=\"h1-h2\">🟡 H1 → 🔵 H2</option>\n                <option value=\"h1-h3\">🟡 H1 → 🟢 H3</option>\n                <option value=\"h2-h3\">🔵 H2 → 🟢 H3</option>\n            </select>\n        </div>\n\n        <div ng-if=\"formData.num_habitaciones === 3\">\n            <div style=\"padding:8px;background:white;border-radius:4px;text-align:center;font-weight:bold;color:#2c3e50\">\n                🟡 H1 → 🔵 H2 → 🟢 H3\n            </div>\n        </div>\n    </div>\n\n    <!-- CAMPOS DINÁMICOS POR HABITACIÓN -->\n    <div ng-if=\"formData.habitaciones && formData.num_habitaciones\">\n        <div ng-repeat=\"hab in getHabitacionesList() track by $index\" \n            style=\"margin-bottom:15px;padding:12px;background:#fff;border-left:4px solid {{getColor(hab)}};border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,0.1)\">\n            \n            <div style=\"font-size:13px;font-weight:bold;color:#2c3e50;margin-bottom:10px\">\n                {{getNombreHabitacion(hab)}}\n            </div>\n\n            <div style=\"margin-bottom:8px\">\n                <input type=\"text\" ng-model=\"formData.pacientes[hab]\" \n                    placeholder=\"👤 Nombre del Paciente\"\n                    style=\"width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:12px;box-sizing:border-box;margin-bottom:8px\">\n                \n                <select ng-model=\"formData.medicamentos[hab]\"\n                    style=\"width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:12px;box-sizing:border-box;background:white\">\n                    <option value=\"\">— Seleccionar Medicamento —</option>\n                    <option value=\"Paracetamol 500mg\">💊 Paracetamol 500mg</option>\n                    <option value=\"Paracetamol 1g\">💊 Paracetamol 1g</option>\n                    <option value=\"Ibuprofeno 400mg\">💊 Ibuprofeno 400mg</option>\n                    <option value=\"Ibuprofeno 600mg\">💊 Ibuprofeno 600mg</option>\n                    <option value=\"Metformina 850mg\">💊 Metformina 850mg</option>\n                    <option value=\"Omeprazol 20mg\">💊 Omeprazol 20mg</option>\n                    <option value=\"Losartán 50mg\">💊 Losartán 50mg</option>\n                    <option value=\"Enalapril 10mg\">💊 Enalapril 10mg</option>\n                    <option value=\"Amlodipino 5mg\">💊 Amlodipino 5mg</option>\n                    <option value=\"Atorvastatina 20mg\">💊 Atorvastatina 20mg</option>\n                    <option value=\"Insulina 10U\">💉 Insulina 10U</option>\n                    <option value=\"Diclofenaco 75mg\">💊 Diclofenaco 75mg</option>\n                    <option value=\"Ketorolaco 10mg\">💊 Ketorolaco 10mg</option>\n                    <option value=\"Aspirina 100mg\">💊 Aspirina 100mg</option>\n                    <option value=\"Prednisona 20mg\">💊 Prednisona 20mg</option>\n                </select>\n            </div>\n        </div>\n\n        <!-- HORA GENERAL DE ENTREGA -->\n        <div style=\"margin-bottom:12px\">\n            <label style=\"font-size:12px;color:#2c3e50;font-weight:bold;display:block;margin-bottom:5px\">\n                ⏰ Hora Programada de Entrega\n            </label>\n            <input type=\"time\" ng-model=\"formData.hora_entrega\"\n                style=\"width:100%;padding:8px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box\">\n        </div>\n\n        <!-- ESTADO ACTUAL -->\n        <div ng-if=\"cargando || puedeContinuar || todasCargadas\" style=\"margin-bottom:15px;padding:15px;background:#e3f2fd;border-radius:6px\">\n            <div style=\"font-size:14px;font-weight:bold;color:#1976d2;margin-bottom:8px\">\n                📋 Progreso de Carga:\n            </div>\n            <div style=\"font-size:13px;color:#1565c0\">\n                Habitación actual: <strong>{{habitacionActual}}</strong><br>\n                Estado: <strong>{{estadoCarga}}</strong><br>\n                <span ng-if=\"todasCargadas\" style=\"color:#27ae60;font-weight:bold\">✅ Todas las habitaciones cargadas</span>\n            </div>\n        </div>\n\n        <!-- BOTÓN INICIAR CARGA -->\n        <button ng-click=\"iniciarCargaSecuencial()\" ng-disabled=\"!estaCompleto() || cargando || todasCargadas\"\n            style=\"width:100%;padding:14px;background:#27ae60;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:10px\"\n            ng-class=\"{'disabled': !estaCompleto() || cargando || todasCargadas}\">\n            📦 INICIAR CARGA SECUENCIAL\n        </button>\n\n        <!-- TEMPORIZADOR DE CARGA -->\n        <div ng-if=\"cargando\" style=\"text-align:center;padding:15px;background:#fff3cd;border-radius:6px;margin-bottom:10px\">\n            <div style=\"font-size:16px;font-weight:bold;color:#856404;margin-bottom:8px\">\n                ⏳ Cargando medicamentos para {{habitacionActual}}...\n            </div>\n            <div style=\"font-size:32px;font-weight:bold;color:#856404\">\n                {{tiempoRestante}}s\n            </div>\n            <div style=\"width:100%;height:8px;background:#ecf0f1;border-radius:4px;margin-top:10px;overflow:hidden\">\n                <div style=\"width:{{(10-tiempoRestante)*10}}%;height:100%;background:#f39c12;transition:width 1s\"></div>\n            </div>\n        </div>\n\n        <!-- BOTÓN SIGUIENTE HABITACIÓN -->\n        <button ng-click=\"siguienteHabitacion()\" ng-show=\"puedeContinuar && !todasCargadas\"\n            style=\"width:100%;padding:14px;background:#3498db;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:10px\">\n            ➡️ CARGAR SIGUIENTE HABITACIÓN\n        </button>\n\n        <!-- BOTÓN INICIAR ENTREGA FINAL - APARECE CUANDO TODAS ESTÁN CARGADAS -->\n        <button ng-click=\"iniciarEntregaFinal()\" ng-show=\"todasCargadas\"\n            style=\"width:100%;padding:14px;background:#2980b9;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;margin-top:10px\"\n            ng-class=\"{'disabled': entregando}\">\n            🚀 INICIAR ENTREGA COMPLETA\n        </button>\n    </div>\n\n    <div style=\"margin-top:8px;font-size:11px;color:#7f8c8d;text-align:center\">\n        * Todos los campos son obligatorios\n    </div>\n\n    <style>\n        .btn-primary { background:#2980b9; color:white; }\n        .btn-secondary { background:#ecf0f1; color:#2c3e50; }\n        .btn-primary:hover { background:#1a5276; }\n        .btn-secondary:hover { background:#d5dbdb; }\n        .disabled { opacity:0.5; cursor:not-allowed; }\n    </style>\n\n    <script>\n        (function(scope) {\n            scope.formData = {\n                encargado: '',\n                num_habitaciones: 0,\n                habitaciones: '',\n                pacientes: {},\n                medicamentos: {},\n                hora_entrega: ''\n            };\n            \n            scope.cargando = false;\n            scope.tiempoRestante = 10;\n            scope.habitacionActual = '';\n            scope.estadoCarga = '';\n            scope.puedeContinuar = false;\n            scope.todasCargadas = false;\n            scope.entregando = false;\n            scope.habitacionesCargadas = [];\n            scope.indiceActual = 0;\n\n            scope.setNumHabitaciones = function(num) {\n                scope.formData.num_habitaciones = num;\n                scope.formData.habitaciones = num === 3 ? 'h1-h2-h3' : '';\n                scope.formData.pacientes = {};\n                scope.formData.medicamentos = {};\n                scope.habitacionesCargadas = [];\n                scope.indiceActual = 0;\n                scope.puedeContinuar = false;\n                scope.todasCargadas = false;\n            };\n\n            scope.getHabitacionesList = function() {\n                if (!scope.formData.habitaciones) return [];\n                return scope.formData.habitaciones.split('-');\n            };\n\n            scope.getColor = function(hab) {\n                const colors = { 'h1': '#f1c40f', 'h2': '#3498db', 'h3': '#27ae60' };\n                return colors[hab] || '#95a5a6';\n            };\n\n            scope.getNombreHabitacion = function(hab) {\n                const names = { \n                    'h1': '🟡 Habitación 1', \n                    'h2': '🔵 Habitación 2', \n                    'h3': '🟢 Habitación 3' \n                };\n                return names[hab] || hab;\n            };\n\n            scope.estaCompleto = function() {\n                if (!scope.formData.encargado || !scope.formData.habitaciones) return false;\n                const habitaciones = scope.getHabitacionesList();\n                for (let hab of habitaciones) {\n                    if (!scope.formData.pacientes[hab] || !scope.formData.medicamentos[hab]) {\n                        return false;\n                    }\n                }\n                return true;\n            };\n\n            scope.iniciarCargaSecuencial = function() {\n                scope.habitacionesCargadas = [];\n                scope.indiceActual = 0;\n                scope.cargarHabitacionActual();\n            };\n\n            scope.cargarHabitacionActual = function() {\n                const habitaciones = scope.getHabitacionesList();\n                \n                // Verificar si ya cargamos todas las habitaciones\n                if (scope.indiceActual >= habitaciones.length) {\n                    scope.todasCargadas = true;\n                    scope.cargando = false;\n                    scope.puedeContinuar = false;\n                    scope.estadoCarga = 'Completado';\n                    scope.habitacionActual = 'Todas';\n                    scope.$applyAsync();\n                    return;\n                }\n\n                const hab = habitaciones[scope.indiceActual];\n                scope.habitacionActual = scope.getNombreHabitacion(hab);\n                scope.estadoCarga = 'Preparando...';\n                scope.cargando = true;\n                scope.tiempoRestante = 10;\n                scope.puedeContinuar = false;\n\n                // Temporizador de 10 segundos\n                const interval = setInterval(function() {\n                    scope.tiempoRestante--;\n                    if (scope.tiempoRestante <= 0) {\n                        clearInterval(interval);\n                        scope.cargando = false;\n                        scope.estadoCarga = 'Completada';\n                        \n                        // Enviar comando MQTT para activar servos\n                        const comandos = { 'h1': 'H1', 'h2': 'H2', 'h3': 'H3' };\n                        scope.send({\n                            payload: {\n                                accion: 'ACTIVAR_SERVOS',\n                                comando: comandos[hab],\n                                habitacion: hab.toUpperCase()\n                            }\n                        });\n                        \n                        scope.habitacionesCargadas.push(hab);\n                        \n                        // Verificar si es la última habitación\n                        if (scope.indiceActual >= habitaciones.length - 1) {\n                            // Es la última, marcar como completado\n                            scope.todasCargadas = true;\n                            scope.puedeContinuar = false;\n                            scope.estadoCarga = 'Todas las habitaciones cargadas';\n                        } else {\n                            // Aún hay más habitaciones\n                            scope.puedeContinuar = true;\n                        }\n                        \n                        scope.$applyAsync();\n                    }\n                }, 1000);\n            };\n\n            scope.siguienteHabitacion = function() {\n                scope.indiceActual++;\n                scope.cargarHabitacionActual();\n            };\n\n            scope.iniciarEntregaFinal = function() {\n            if (!scope.todasCargadas) return;\n\n            scope.entregando = true;\n            const habitaciones = scope.getHabitacionesList();\n\n            // 1. Enviar comando de número de habitaciones (\"1H\", \"2H\", \"3H\")\n            scope.send({\n            payload: {\n            accion: 'INICIAR_ENTREGA',\n            comando_num: scope.formData.num_habitaciones + 'H',\n            encargado: scope.formData.encargado,\n            habitaciones: scope.formData.habitaciones.toUpperCase(),\n            total_habitaciones: scope.formData.num_habitaciones\n            }\n            });\n\n            // 2. Enviar comandos \"a\", \"b\", \"c\" para cada habitación con delay\n            const comandos_letra = { 'h1': 'a', 'h2': 'b', 'h3': 'c' };\n\n            habitaciones.forEach((hab, index) => {\n            setTimeout(function() {\n            scope.send({\n            payload: {\n            accion: 'ENTREGA_HABITACION',\n            comando_letra: comandos_letra[hab],\n            habitacion: hab.toUpperCase(),\n            paciente: scope.formData.pacientes[hab],\n            medicamento: scope.formData.medicamentos[hab],\n            hora_entrega: scope.formData.hora_entrega,\n            encargado: scope.formData.encargado\n            }\n            });\n            }, (index + 1) * 500); // 500ms entre cada comando\n            });\n\n            // 3. Resetear formulario después de enviar todo\n            setTimeout(function() {\n            scope.entregando = false;\n            scope.formData = {\n            encargado: '',\n            num_habitaciones: 0,\n            habitaciones: '',\n            pacientes: {},\n            medicamentos: {},\n            hora_entrega: ''\n            };\n            scope.habitacionesCargadas = [];\n            scope.indiceActual = 0;\n            scope.puedeContinuar = false;\n            scope.todasCargadas = false;\n            scope.$applyAsync();\n            }, habitaciones.length * 500 + 1000);\n            };\n        })(scope);\n    </script>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "3",
+        "x": 150,
+        "y": 600,
+        "wires": [
+            [
+                "16b02c0987a095e5"
+            ]
+        ]
+    },
+    {
+        "id": "16b02c0987a095e5",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Procesar misión",
+        "func": "const d = msg.payload;\n\n// CASO 1: ACTIVAR SERVOS (después de 10 segundos de carga)\nif (d.accion === 'ACTIVAR_SERVOS') {\n    const msgMQTT = {\n        topic: \"bomax/dispenser/comando\",\n        payload: d.comando  // \"H1\", \"H2\", o \"H3\"\n    };\n    \n    const hora = new Date().toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit'});\n    const entrada = `${hora} ⏱️ Carga completada - Activando servos: ${d.comando}`;\n    let log = context.get('log') || [];\n    log.unshift(entrada);\n    if (log.length > 15) log = log.slice(0,15);\n    context.set('log', log);\n    \n    const msgLog = { payload: log.join('\\n') };\n    \n    // RETORNAR: [Influx (null), MQTT, Log]\n    return [null, msgMQTT, msgLog];\n}\n\n// CASO 2: INICIAR ENTREGA (enviar número de habitaciones)\nif (d.accion === 'INICIAR_ENTREGA') {\n    context.set('mision_actual', {\n        encargado: d.encargado,\n        habitaciones: d.habitaciones,\n        total: d.total_habitaciones\n    });\n    \n    const msgMQTT = {\n        topic: \"bomax/dispenser/comando\",\n        payload: d.comando_num  // \"1H\", \"2H\", o \"3H\"\n    };\n    \n    const hora = new Date().toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit'});\n    const entrada = `${hora} 🚀 Iniciando entrega - ${d.total_habitaciones} habitación(es): ${d.habitaciones}`;\n    let log = context.get('log') || [];\n    log.unshift(entrada);\n    if (log.length > 15) log = log.slice(0,15);\n    context.set('log', log);\n    \n    const msgLog = { payload: log.join('\\n') };\n    \n    // RETORNAR: [Influx (null), MQTT, Log]\n    return [null, msgMQTT, msgLog];\n}\n\n// CASO 3: ENTREGA POR HABITACIÓN (enviar \"a\", \"b\", \"c\")\nif (d.accion === 'ENTREGA_HABITACION') {\n    const timestamp = Date.now();\n    const medicamento = d.medicamento || \"No especificado\";\n    const horario = d.hora_entrega || \"Inmediata\";\n    \n    // 1. ENVIAR COMANDO MQTT \"a\", \"b\", o \"c\"\n    const msgMQTT = {\n        topic: \"bomax/dispenser/comando\",\n        payload: d.comando_letra  // \"a\", \"b\", o \"c\"\n    };\n    \n    // 2. GUARDAR EN INFLUXDB\n    const lineProtocol = \n        `entregas,` +\n        `paciente=${d.paciente.replace(/ /g,'_')},` +\n        `habitacion=${d.habitacion},` +\n        `enfermera=${d.encargado.replace(/ /g,'_')} ` +\n        `medicamento=\"${medicamento.replace(/\"/g,'\\\\\"')}\",` +\n        `horario=\"${horario}\",` +\n        `estado=\"ENTREGADA\",` +\n        `timestamp=${timestamp}000000`;\n\n    const msgInflux = {\n        method: 'POST',\n        url: 'http://bomax_influxdb:8086/api/v2/write?org=ucb&bucket=robot_data&precision=ns',\n        headers: { \n            'Authorization': 'Token bomax-token-2026', \n            'Content-Type': 'text/plain' \n        },\n        payload: lineProtocol\n    };\n    \n    // 3. LOG VISUAL\n    const hora = new Date().toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit'});\n    const entrada = `${hora} ✓ ${d.encargado} → ${d.habitacion} (${d.paciente}) - 💊 ${medicamento} [${d.comando_letra}]`;\n    \n    let log = context.get('log') || [];\n    log.unshift(entrada);\n    if (log.length > 15) log = log.slice(0,15);\n    context.set('log', log);\n    \n    const msgLog = { payload: log.join('\\n') };\n    \n    // RETORNAR: [Influx, MQTT, Log]\n    return [msgInflux, msgMQTT, msgLog];\n}\n\nreturn null;",
+        "outputs": 3,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 600,
+        "wires": [
+            [
+                "d4616a44746272ef"
+            ],
+            [
+                "57124882c4aec1dc",
+                "45e6270361188883"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "0e7ff4946504657b",
+        "type": "mqtt in",
+        "z": "ff57012727d19470",
+        "name": "Recibe estado robot",
+        "topic": "bomax/estado",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 150,
+        "y": 1120,
+        "wires": [
+            [
+                "de3f97778c72742c"
+            ]
+        ]
+    },
+    {
+        "id": "de3f97778c72742c",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Log MQTT estado",
+        "func": "const hora = new Date().toLocaleTimeString('es-BO',{hour:'2-digit',minute:'2-digit',second:'2-digit'});\nconst d = msg.payload;\nlet texto = '';\nif (typeof d === 'object') {\n    const estado = d.estado || d.status || 'UPDATE';\n    const pos = d.pos !== undefined ? ` | Pos: ${d.pos}cm` : '';\n    const bat = d.bateria !== undefined ? ` | Bat: ${d.bateria}%` : '';\n    texto = `${hora} [ROBOT] ${estado}${pos}${bat}`;\n} else {\n    texto = `${hora} [MQTT] ${d}`;\n}\nlet log = context.get('log') || [];\nlog.unshift(texto);\nif (log.length > 10) log = log.slice(0,10);\ncontext.set('log', log);\nreturn {payload: log.join('\\n')};",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 1120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "login_template",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "ui_group_login",
+        "name": "Pantalla Login",
+        "order": 1,
+        "width": "6",
+        "height": "10",
+        "format": "<div\n  style=\"font-family:Arial,sans-serif;max-width:400px;margin:0 auto;padding:20px;background:white;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1)\">\n\n  <!-- Logo -->\n  <div style=\"text-align:center;margin-bottom:28px\">\n    <div style=\"font-size:48px\">🏥</div>\n    <div style=\"font-size:24px;font-weight:bold;color:#2c3e50;margin-top:8px\">BoMax</div>\n    <div style=\"font-size:12px;color:#7f8c8d\">Sistema de entrega de medicamentos</div>\n  </div>\n\n  <!-- Mensaje éxito -->\n  <div id=\"msg-exito\"\n    style=\"display:none;background:#eafaf1;border:2px solid #27ae60;border-radius:6px;padding:12px;margin-bottom:16px;text-align:center;font-size:14px;color:#1e8449;font-weight:bold\">\n    ✅ Acceso concedido<br>\n    <small>Redirigiendo al dashboard...</small>\n  </div>\n\n  <!-- Mensaje error -->\n  <div id=\"msg-error\"\n    style=\"display:none;background:#fdecea;border:2px solid #e74c3c;border-radius:6px;padding:12px;margin-bottom:16px;text-align:center;font-size:14px;color:#c0392b;font-weight:bold\">\n  </div>\n\n  <!-- Formulario -->\n  <div id=\"login-form\">\n    <div style=\"margin-bottom:14px\">\n      <label style=\"font-size:12px;color:#2c3e50;font-weight:bold;display:block;margin-bottom:5px\">👤 Usuario</label>\n      <input type=\"text\" id=\"input-usuario\" placeholder=\"enfermera\"\n        style=\"width:100%;padding:10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box\"/>\n    </div>\n\n    <div style=\"margin-bottom:20px\">\n      <label style=\"font-size:12px;color:#2c3e50;font-weight:bold;display:block;margin-bottom:5px\">🔒 Contraseña</label>\n      <input type=\"password\" id=\"input-password\" placeholder=\"••••\"\n        style=\"width:100%;padding:10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box\"/>\n    </div>\n\n    <button onclick=\"hacerLogin()\"\n      style=\"width:100%;padding:12px;background:#2980b9;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer\">\n      INGRESAR AL SISTEMA\n    </button>\n  </div>\n\n  <!-- Botón manual de emergencia -->\n  <div id=\"btn-manual\" style=\"display:none;margin-top:15px;text-align:center\">\n    <small style=\"color:#7f8c8d\">Si la redirección falla:</small><br>\n    <a href=\"/ui/#!/1\"\n      style=\"display:inline-block;margin-top:8px;padding:8px 16px;background:#95a5a6;color:white;text-decoration:none;border-radius:4px;font-size:12px\">\n      Ir al dashboard manualmente →\n    </a>\n  </div>\n\n  <script>\n    // Función de login simplificada\n    function hacerLogin() {\n      const usuario = document.getElementById('input-usuario').value.trim().toLowerCase();\n      const password = document.getElementById('input-password').value.trim();\n      \n      const USUARIOS = [\n        { usuario: 'enfermera',     password: '1234',      rol: 'Operador' },\n        { usuario: 'supervisora',   password: 'admin2026', rol: 'Supervisor' },\n        { usuario: 'administrador', password: 'bomax2026', rol: 'Admin' }\n      ];\n      \n      const encontrado = USUARIOS.find(x => x.usuario === usuario && x.password === password);\n      \n      if (encontrado) {\n        // ÉXITO - Guardar sesión\n        const sessionData = {\n          usuario: usuario,\n          rol: encontrado.rol,\n          timestamp: new Date().toISOString(),\n          expires: Date.now() + (8 * 60 * 60 * 1000)\n        };\n        \n        localStorage.setItem('bomax_auth', JSON.stringify(sessionData));\n        console.log('[BoMax] Sesión guardada:', sessionData);\n        \n        // Mostrar mensaje de éxito\n        document.getElementById('msg-exito').style.display = 'block';\n        document.getElementById('msg-error').style.display = 'none';\n        document.getElementById('login-form').style.display = 'none';\n        \n        // Redirección según rol\n        const rol = encontrado.rol;\n        let targetTab = '/ui/#!/1'; // Default: Operador\n\n        if (rol === 'Supervisor') {\n        targetTab = '/ui/#!/2'; // Tab de Supervisor\n        } else if (rol === 'Admin') {\n        targetTab = '/ui/#!/3'; // Tab de Admin\n        }\n\n        // Redirección después de 1.5 segundos\n        setTimeout(function() {\n        console.log('[BoMax] Redirigiendo ' + rol + ' a tab:', targetTab);\n        window.location.href = targetTab;\n        }, 1500);\n        \n        // Mostrar botón manual por si falla\n        setTimeout(function() {\n          document.getElementById('btn-manual').style.display = 'block';\n        }, 2000);\n        \n      } else {\n        // ERROR\n        document.getElementById('msg-error').innerHTML = '❌ Usuario o contraseña incorrectos';\n        document.getElementById('msg-error').style.display = 'block';\n        document.getElementById('input-password').value = '';\n        \n        setTimeout(function() {\n          document.getElementById('msg-error').style.display = 'none';\n        }, 3000);\n      }\n    }\n    \n    // Permitir login con Enter\n    document.addEventListener('DOMContentLoaded', function() {\n      document.getElementById('input-password').addEventListener('keypress', function(e) {\n        if (e.key === 'Enter') hacerLogin();\n      });\n    });\n  </script>\n\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": false,
+        "templateScope": "local",
+        "className": "",
+        "x": 130,
+        "y": 100,
+        "wires": [
+            [
+                "fn_login_ok"
+            ]
+        ]
+    },
+    {
+        "id": "fn_login_ok",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Registrar login",
+        "func": "const d = msg.payload;\nconst hora = new Date().toLocaleTimeString('es-BO',{hour:'2-digit',minute:'2-digit',second:'2-digit'});\nconst entrada = `${hora} 🔐 LOGIN: ${d.usuario} (${d.rol})`;\n\n// Guardar usuario en contexto global para usarlo en el formulario\nglobal.set('usuario_activo', d.usuario);\nglobal.set('rol_activo', d.rol);\n\n// Agregar al log\nlet log = global.get('log_sistema') || [];\nlog.unshift(entrada);\nif (log.length > 20) log = log.slice(0,20);\nglobal.set('log_sistema', log);\n\n// Publicar por MQTT\nreturn {\n    payload: JSON.stringify({\n        accion: 'LOGIN',\n        usuario: d.usuario,\n        rol: d.rol,\n        timestamp: d.timestamp\n    }),\n    topic: 'bomax/sistema'\n};",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 100,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d22e04eb93129616",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "25121b4edc4ea9c1",
+        "name": "Boton Logout",
+        "order": 2,
+        "width": "3",
+        "height": "3",
+        "format": "<div style=\"display:flex;justify-content:flex-end;padding:10px\">\n    <button onclick=\"logout()\"\n          style=\"background:#e74c3c;color:white;border:none;padding:10px 20px;\n                 border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;\n                 box-shadow:0 2px 4px rgba(0,0,0,0.2)\">\n    🚪 Cerrar Sesión\n  </button>\n</div>\n\n<script>\n    function logout() {\n  localStorage.removeItem('bomax_auth');\n  // Redirige al login (tab 0)\n  window.location.href = '/ui/#!/0';\n}\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 130,
+        "y": 180,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "f09e9d2e89dbcf7b",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "g": "aafdaefa03ee6b73",
+        "group": "25121b4edc4ea9c1",
+        "name": "Autenticacion",
+        "order": 1,
+        "width": "1",
+        "height": "1",
+        "format": "<script>\n  (function(scope) {\n    const auth = localStorage.getItem('bomax_auth');\n    \n    if (!auth) {\n      console.log('[BoMax] No hay sesión, redirigiendo a login...');\n      window.location.href = '/ui/#!/0';\n      return;\n    }\n    \n    const authData = JSON.parse(auth);\n    \n    // Verificar expiración\n    if (Date.now() > authData.expires) {\n      localStorage.removeItem('bomax_auth');\n      window.location.href = '/ui/#!/0';\n      return;\n    }\n    \n    // Verificar a qué tab está intentando acceder\n    const currentPath = window.location.href;\n    const rol = authData.rol;\n    \n    // 🔒 RESTRICCIONES POR ROL:\n    \n    // Si es Operador e intenta acceder a Tab 2 (Supervisor) o Tab 3 (Admin)\n    if (rol === 'Operador') {\n      if (currentPath.includes('/ui/#!/2') || currentPath.includes('/ui/#!/3')) {\n        console.warn('[BoMax] ⛔ Operador intentó acceder a área restringida');\n        window.location.href = '/ui/#!/1'; // Forzar Tab 1\n        return;\n      }\n    }\n    \n    // Si es Supervisor, redirigir a Tab 2\n    if (rol === 'Supervisor') {\n      if (!currentPath.includes('/ui/#!/2')) {\n        console.log('[BoMax] Supervisor autenticado → Tab 2');\n        window.location.href = '/ui/#!/2';\n        return;\n      }\n    }\n    \n    // Si es Admin, redirigir a Tab 3\n    if (rol === 'Admin') {\n      if (!currentPath.includes('/ui/#!/3')) {\n        console.log('[BoMax] Admin autenticado → Tab 3');\n        window.location.href = '/ui/#!/3';\n        return;\n      }\n    }\n    \n    // Si es Operador, redirigir a Tab 1\n    if (rol === 'Operador') {\n      if (!currentPath.includes('/ui/#!/1')) {\n        console.log('[BoMax] Operador autenticado → Tab 1');\n        window.location.href = '/ui/#!/1';\n        return;\n      }\n    }\n    \n    console.log('[BoMax] ✅ ' + rol + ' autenticado correctamente');\n    \n    // Enviar datos al flujo\n    scope.send({\n      payload: { \n        usuario: authData.usuario,\n        rol: authData.rol,\n        accion: 'AUTH_VERIFIED',\n        timestamp: new Date().toISOString()\n      }\n    });\n    \n  })(scope);\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 120,
+        "y": 140,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "297a9de5f86e43fb",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "e3f3b7e614da17bf",
+        "name": "Panel de ALertas",
+        "order": 3,
+        "width": "9",
+        "height": "10",
+        "format": "<div style=\"font-family: 'Segoe UI', sans-serif; padding: 15px;\">\n    <h4 style=\"margin: 0 0 15px 0; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px;\"> 🔔 Estado del\n        Sistema </h4> <!-- ng-repeat recorre la lista de alertas que envía el nodo Function -->\n    <div ng-repeat=\"alerta in msg.payload\" style=\"margin-bottom: 10px; animation: slideIn 0.5s ease;\">\n        <div style=\" display: flex; align-items: center; padding: 12px; border-radius: 8px; border-left: 6px solid {{alerta.color}}; color: #333; font-weight: 500; box-shadow: 0 2px 5px rgba(0,0,0,0.05); \"\n            ng-style=\"{'background-color': alerta.color + '22'}\">\n            <span style=\"font-size: 24px; margin-right: 15px;\">{{ alerta.icono }}</span>\n            <div>\n                <div style=\"font-size: 13px; font-weight: bold; color: {{alerta.color}};\"> {{ alerta.nivel }} </div>\n                <div style=\"font-size: 14px;\"> {{ alerta.mensaje }} </div>\n            </div>\n        </div>\n    </div> <!-- Mensaje por si no hay datos -->\n    <div ng-if=\"!msg.payload || msg.payload.length === 0\" style=\"color: #95a5a6; text-align: center; padding: 20px;\">\n        Esperando datos del robot... </div>\n    <style>\n        @keyframes slideIn {\n            from {\n                opacity: 0;\n                transform: translateY(-10px);\n            }\n\n            to {\n                opacity: 1;\n                transform: translateY(0);\n            }\n        }\n    </style>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 770,
+        "y": 280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "01f716b702507b37",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "Timer Pico (1 seg)",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 650,
+        "y": 100,
+        "wires": [
+            [
+                "c41c466573273594"
+            ]
+        ]
+    },
+    {
+        "id": "c41c466573273594",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "SImular Datos Sensores",
+        "func": "// Simulamos lectura de sensores reales\n// REQ-OP-003: Velocidad objetivo 5 cm/s (+/- 10% es 4.5 a 5.5)\n// Generamos un valor aleatorio dentro del rango válido para probar\nlet velocidad = (Math.random() * (5.5 - 4.5) + 4.5).toFixed(2);\n\n// Batería que baja muy lentamente para simular REQ-OP-002 (8 horas)\nlet bateria = msg.payload.bateria || 100;\nbateria = bateria - 0.01; // Desgaste simulado\n\n// Timestamp para calcular latencia (REQ-OP-002: < 1s)\nlet ahora = Date.now();\n\nmsg.topic = \"bomax/sensores/telemetria\";\nmsg.payload = {\n    timestamp_envio: ahora,\n    velocidad_cm_s: parseFloat(velocidad),\n    bateria_porcentaje: parseFloat(bateria.toFixed(2)),\n    estado: \"EN_RUTA\",\n    id_sensor: \"pico_01\"\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 910,
+        "y": 100,
+        "wires": [
+            [
+                "edfd502c22569e93"
+            ]
+        ]
+    },
+    {
+        "id": "edfd502c22569e93",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "Enviar a Raspberry (MQTT)",
+        "topic": "bomax/sensores/telemetria",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker",
+        "x": 1180,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "8c5b6d94a3211ef3",
+        "type": "mqtt in",
+        "z": "ff57012727d19470",
+        "name": "Recibir Telemetría",
+        "topic": "bomax/sensores/telemetria",
+        "qos": "2",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 630,
+        "y": 160,
+        "wires": [
+            [
+                "e2cae87a89097c47"
+            ]
+        ]
+    },
+    {
+        "id": "e2cae87a89097c47",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Validar REQ-OP-002 y 003",
+        "func": "let data = msg.payload;\nlet time_now = Date.now();\n\n// Cálculo de latencia (Tiempo respuesta - Tiempo envío)\nlet latencia_ms = time_now - data.timestamp_envio;\n\n// --- VERIFICACIÓN DE REQUISITOS (PDF) ---\n\n// REQ-OP-003: Velocidad 5 cm/s ±10% (Rango 4.5 - 5.5)\nlet velocidad_ok = (data.velocidad_cm_s >= 4.5 && data.velocidad_cm_s <= 5.5);\n\n// REQ-OP-002: Comunicación < 1000 ms (1 segundo)\nlet latencia_ok = (latencia_ms < 1000);\n\n// Preparamos el mensaje para guardarlo o mostrarlo\nmsg.payload = {\n    mensaje: `Vel: ${data.velocidad_cm_s} cm/s | Latencia: ${latencia_ms} ms`,\n    cumple_velocidad: velocidad_ok,\n    cumple_latencia: latencia_ok,\n    bateria: data.bateria_porcentaje,\n    timestamp_recepcion: new Date().toISOString()\n};\n\n// Si hay errores, avisamos en la consola de Node-RED (Debug)\nif(!velocidad_ok) node.warn(\"️ VELOCIDAD FUERA DE RANGO\");\nif(!latencia_ok) node.error(\"🚨 LATENCIA ALTA (>1s)\");\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 880,
+        "y": 160,
+        "wires": [
+            [
+                "072fbdf0bdc1c32c"
+            ]
+        ]
+    },
+    {
+        "id": "9b93d3a5621ad0f1",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "Verificar Validación",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1150,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "072fbdf0bdc1c32c",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Formato Tarjeta Estado",
+        "func": "let p = msg.payload;\nlet estado_text = \"SISTEMA OK\";\nlet color = \"#27ae60\"; // Verde\n\nif (!p.cumple_latencia || !p.cumple_velocidad) {\n    estado_text = \"ALERTA: FALLA COMUNICACIÓN\";\n    color = \"#e74c3c\"; // Rojo\n}\n\nmsg.payload = `\n<div style=\"background:${color}; color:white; padding:15px; border-radius:8px; text-align:center;\">\n    <h3 style=\"margin:0\">${estado_text}</h3>\n    <p style=\"margin:5px 0\">Latencia: ${p.mensaje.split('|')[1]}</p>\n    <p style=\"margin:5px 0\">Batería: ${p.bateria}%</p>\n</div>`;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1150,
+        "y": 220,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "c198daefaf19656b",
+        "type": "comment",
+        "z": "ff57012727d19470",
+        "name": "ZONA 1: SEGURIDAD & ACCESO (Norma CFR21) ",
+        "info": "TÍTULO: 🔐 ZONA 1: SEGURIDAD & ACCESO (Norma CFR21)\nDESCRIPCIÓN:\n• Login con roles (Enfermera/Supervisor/Admin)\n• Registro inmutable de accesos\n• Autenticación persistente (localStorage)\n• Botón Logout seguro\n→ Cumple: REQ de integridad de datos y auditoría",
+        "x": 210,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "4b476b5b4d63fdb6",
+        "type": "comment",
+        "z": "ff57012727d19470",
+        "name": "ZONA 2: COMUNICACIÓN MQTT & VALIDACIÓN (REQ-OP-002)",
+        "info": "TÍTULO: 📡 ZONA 2: COMUNICACIÓN MQTT & VALIDACIÓN (REQ-OP-002)\nDESCRIPCIÓN:\n• Simula transmisión bidireccional Raspberry ↔ Pi Pico\n• Mide latencia en tiempo real (<1000ms)\n• Verifica velocidad operativa (5 cm/s ±10%)\n• Alerta automática si falla comunicación o velocidad\n→ Cumple: REQ-OP-002 (Latencia <1s) y REQ-OP-003 (Velocidad)",
+        "x": 770,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "69f69c84e2340e1f",
+        "type": "comment",
+        "z": "ff57012727d19470",
+        "name": " ZONA 3:  NAVEGACIÓN & SENSORES (RIESGOS 01-05)",
+        "info": "TÍTULO: 🤖 ZONA 3: NAVEGACIÓN, SENSORES & ALERTAS (RIESGOS)\nDESCRIPCIÓN:\n• Simula odometría, batería y posición en pasillo\n• Detecta obstáculos <20cm (RIESGO-03)\n• Monitorea fallo de sensores (RIESGO-04)\n• Panel de alertas en tiempo real\n→ Cumple: RIESGO-01 a 05 del análisis de riesgos",
+        "x": 230,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "1511dc5e42087eb4",
+        "type": "comment",
+        "z": "ff57012727d19470",
+        "name": "ZONA 4:  PERSISTENCIA & REGISTRO (INFLUXDB)",
+        "info": "TÍTULO: 💾 ZONA 4: PERSISTENCIA & HISTORIAL (InfluxDB)\nDESCRIPCIÓN:\n• Guarda misiones iniciadas (inmutable)\n• Consulta historial de entregas cada 5 min\n• Formato JSON para dashboard\n• Log de actividad MQTT\n→ Cumple: REQ-OP-002 (Registro continuo) y CFR21 (Auditoría)",
+        "x": 220,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "f053ce6e1cbba1e8",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "ve sim",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 530,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "0348a2a59cf7642f",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "ve alertas",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 720,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "96915969dd1e7499",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Verficar alertas",
+        "func": "// ============================================\n// EXTRAER DATOS (puede venir como string u objeto)\n// ============================================\nvar distancia, alerta, voltaje, bateria_baja;\n\nif (typeof msg.payload === 'string') {\n    // Intentar parsear como JSON\n    try {\n        var datos = JSON.parse(msg.payload);\n        \n        // Verificar si es dato de batería (tiene voltaje)\n        if (datos.voltaje !== undefined) {\n            voltaje = datos.voltaje;\n            bateria_baja = datos.bateria_baja || false;\n            distancia = null;\n            alerta = null;\n        }\n        // Si es dato de obstáculo (tiene distancia)\n        else if (datos.distancia !== undefined) {\n            distancia = datos.distancia;\n            alerta = datos.alerta;\n            voltaje = null;\n            bateria_baja = null;\n        }\n        // Mensaje desconocido\n        else {\n            node.warn(\"JSON desconocido: \" + msg.payload);\n            return [null, null, null];\n        }\n    } catch(e) {\n        node.warn(\"No es JSON válido: \" + msg.payload);\n        return [null, null, null];\n    }\n} else if (typeof msg.payload === 'object') {\n    // Ya viene como objeto\n    voltaje = msg.payload.voltaje;\n    bateria_baja = msg.payload.bateria_baja;\n    distancia = msg.payload.distancia;\n    alerta = msg.payload.alerta;\n} else {\n    node.error(\"Tipo de dato desconocido: \" + typeof msg.payload);\n    return [null, null, null];\n}\n\n// ============================================\n// ALERTAS COMBINADAS\n// ============================================\nvar alertasArray = [];\n\n// 1. ALERTA DE BATERÍA (si tenemos voltaje)\nif (voltaje !== undefined && voltaje !== null) {\n    if (voltaje <= 0.5) {\n        alertasArray.push({\n            nivel: \"CRÍTICO\",\n            mensaje: \"🔌 BATERÍA DESCONECTADA - Sin alimentación\",\n            color: \"#95a5a6\",\n            icono: \"🔌\",\n            timestamp: new Date().toLocaleTimeString()\n        });\n    } else if (voltaje <= 10.5) {\n        alertasArray.push({\n            nivel: \"ADVERTENCIA\",\n            mensaje: \"⚠️ BATERÍA BAJA: \" + voltaje.toFixed(2) + \"V - ¡Recargar!\",\n            color: \"#e74c3c\",\n            icono: \"🔋\",\n            timestamp: new Date().toLocaleTimeString()\n        });\n    } else if (voltaje >= 11.0) {\n        // Batería OK - no agregar alerta\n    } else {\n        // Zona intermedia (10.5 - 11.0V)\n        alertasArray.push({\n            nivel: \"INFORMACIÓN\",\n            mensaje: \"🔋 Batería: \" + voltaje.toFixed(2) + \"V\",\n            color: \"#f39c12\",\n            icono: \"🔋\",\n            timestamp: new Date().toLocaleTimeString()\n        });\n    }\n}\n\n// 2. ALERTA DE OBSTÁCULO (si tenemos distancia)\nif (distancia !== undefined && distancia !== null && alerta !== undefined) {\n    if (alerta) {\n        alertasArray.push({\n            nivel: \"PELIGRO\",\n            mensaje: \"🚨 Obstáculo detectado a \" + distancia + \" cm - ¡Frenando!\",\n            color: \"#e74c3c\",\n            icono: \"🚨\",\n            timestamp: new Date().toLocaleTimeString()\n        });\n    }\n}\n\n// ============================================\n// SALIDA 1: Para el Panel de Alertas (ARRAY)\n// ============================================\nvar msgAlerta = {\n    payload: alertasArray,\n    topic: alertasArray.length > 0 ? \"alerta\" : \"normal\"\n};\n\n// ============================================\n// SALIDA 2: Para debug (ve alertas)\n// ============================================\nvar debugText = \"\";\nif (voltaje !== null && voltaje !== undefined) {\n    debugText += \"🔋 Batería: \" + voltaje.toFixed(2) + \"V\";\n    if (bateria_baja) debugText += \" ⚠️\";\n}\nif (distancia !== null && distancia !== undefined) {\n    if (debugText) debugText += \" | \";\n    debugText += \"Distancia: \" + distancia + \" cm\";\n    if (alerta) debugText += \" 🚨\";\n}\n\nvar msgDebug = {\n    payload: debugText,\n    topic: \"debug_alerta\",\n    distancia: distancia,\n    voltaje: voltaje,\n    bateria_baja: bateria_baja\n};\n\n// ============================================\n// SALIDA 3: Para Actualizar Sensor Frontal\n// ============================================\nvar msgDistancia = {\n    payload: {\n        frontal_real: distancia,\n        voltaje_bateria: voltaje,\n        bateria_baja: bateria_baja\n    },\n    topic: \"distancia_real\"\n};\n\n// ============================================\n// RETORNAR LAS 3 SALIDAS\n// ============================================\nreturn [msgAlerta, msgDebug, msgDistancia];",
+        "outputs": 3,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 480,
+        "y": 300,
+        "wires": [
+            [
+                "297a9de5f86e43fb"
+            ],
+            [
+                "52e084cc1c6dd312"
+            ],
+            [
+                "5ed02ce9dbe7f945"
+            ]
+        ]
+    },
+    {
+        "id": "d4616a44746272ef",
+        "type": "http request",
+        "z": "ff57012727d19470",
+        "name": "",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "http://bomax_influxdb:8086/api/v2/write?org=ucb&bucket=robot_data&precision=ns",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Authorization",
+                "keyValue": "",
+                "valueType": "other",
+                "valueValue": "Token bomax-token-2026"
+            },
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "other",
+                "valueValue": "text/plain"
+            }
+        ],
+        "x": 670,
+        "y": 540,
+        "wires": [
+            [
+                "3e2dce67ff0c8d6b"
+            ]
+        ]
+    },
+    {
+        "id": "72b82af45a62a42b",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 380,
+        "y": 1020,
+        "wires": []
+    },
+    {
+        "id": "a254591bf5f7a802",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 960,
+        "wires": []
+    },
+    {
+        "id": "e1de916e8fb8fa37",
+        "type": "mqtt in",
+        "z": "ff57012727d19470",
+        "name": "Telemetría Robot Real",
+        "topic": "bomax/robot/telemetria",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "303df39c2e310875",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 120,
+        "y": 700,
+        "wires": [
+            [
+                "6b781078360fe09d"
+            ]
+        ]
+    },
+    {
+        "id": "6b781078360fe09d",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "function 1",
+        "func": "try {\n    const datos = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    \n    // 1. Estado para las Cards (Estado, Batería simulada, Habitaciones)\n    msg.cards = {\n        estado: datos.estado_motor || \"EN_RUTA\",\n        bateria: 98, // Por ahora fijo, luego lo leemos de sensores reales\n        habitacion_actual: datos.habitacion || \"En tránsito\",\n        objeto_visto: datos.objeto_detectado ? \"✅ SÍ\" : \"🔍 Buscando...\"\n    };\n\n    // 2. Log de actividad en tiempo real\n    const hora = new Date(datos.timestamp * 1000).toLocaleTimeString('es-BO');\n    msg.log = `${hora} | ${datos.estado_motor} | Objeto: ${datos.objeto_detectado ? 'Detectado' : 'No'} | X:${datos.posicion_x || 0}`;\n\n    // 3. Datos crudos para el mapa o debug\n    msg.robotData = datos;\n\n    return [msg, {payload: msg.log}, {payload: datos}];\n} catch (e) {\n    node.error(\"Error parseando telemetría: \" + e);\n    return null;\n}",
+        "outputs": 3,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 700,
+        "wires": [
+            [],
+            [
+                "c0e2a086f0ee77a9"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "1038740ed8febd94",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "RESET",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "RESET",
+        "payloadType": "str",
+        "x": 130,
+        "y": 1020,
+        "wires": [
+            [
+                "72b82af45a62a42b",
+                "a254591bf5f7a802"
+            ]
+        ]
+    },
+    {
+        "id": "cea06bbe25a71bc4",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 380,
+        "y": 1260,
+        "wires": []
+    },
+    {
+        "id": "43f136e116de028f",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 1200,
+        "wires": []
+    },
+    {
+        "id": "1f5fc5b83b520932",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "H1",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "H1",
+        "payloadType": "str",
+        "x": 130,
+        "y": 1260,
+        "wires": [
+            [
+                "cea06bbe25a71bc4",
+                "43f136e116de028f"
+            ]
+        ]
+    },
+    {
+        "id": "a52e8a89237ff6e9",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 380,
+        "y": 1400,
+        "wires": []
+    },
+    {
+        "id": "2274f56110af56e8",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 1340,
+        "wires": []
+    },
+    {
+        "id": "d40d27aa72242cfd",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "h2",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "H2",
+        "payloadType": "str",
+        "x": 130,
+        "y": 1400,
+        "wires": [
+            [
+                "a52e8a89237ff6e9",
+                "2274f56110af56e8"
+            ]
+        ]
+    },
+    {
+        "id": "dfa3ec4b00db394b",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 440,
+        "y": 1560,
+        "wires": []
+    },
+    {
+        "id": "505d5444a8a40e48",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 4",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 400,
+        "y": 1500,
+        "wires": []
+    },
+    {
+        "id": "9d2d7e52a2596f28",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "H3",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "H3",
+        "payloadType": "str",
+        "x": 190,
+        "y": 1560,
+        "wires": [
+            [
+                "dfa3ec4b00db394b",
+                "505d5444a8a40e48"
+            ]
+        ]
+    },
+    {
+        "id": "d6315d78dc6421c1",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 940,
+        "y": 1040,
+        "wires": []
+    },
+    {
+        "id": "be25c804a963c39d",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 5",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 900,
+        "y": 980,
+        "wires": []
+    },
+    {
+        "id": "9d129ae4cce1b2e7",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "llegada_h1",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "llegada_h1",
+        "payloadType": "str",
+        "x": 620,
+        "y": 1020,
+        "wires": [
+            [
+                "d6315d78dc6421c1",
+                "be25c804a963c39d"
+            ]
+        ]
+    },
+    {
+        "id": "81f6521a47c9a275",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 960,
+        "y": 1180,
+        "wires": []
+    },
+    {
+        "id": "52032a19e4b1ea1e",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 6",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 920,
+        "y": 1120,
+        "wires": []
+    },
+    {
+        "id": "be432a4ce64d525f",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "llegada_h2",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "llegada_h2",
+        "payloadType": "str",
+        "x": 640,
+        "y": 1160,
+        "wires": [
+            [
+                "81f6521a47c9a275",
+                "52032a19e4b1ea1e"
+            ]
+        ]
+    },
+    {
+        "id": "73e335791b4ae2ef",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 960,
+        "y": 1360,
+        "wires": []
+    },
+    {
+        "id": "a8de46138ba9e3d9",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 7",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 920,
+        "y": 1300,
+        "wires": []
+    },
+    {
+        "id": "5209c2588c57ed06",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "llegada_h3",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "llegada_h3",
+        "payloadType": "str",
+        "x": 640,
+        "y": 1340,
+        "wires": [
+            [
+                "73e335791b4ae2ef",
+                "a8de46138ba9e3d9"
+            ]
+        ]
+    },
+    {
+        "id": "ea4c5e31aa8cccaa",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 980,
+        "y": 1560,
+        "wires": []
+    },
+    {
+        "id": "e1f29d86e684679b",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 8",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 940,
+        "y": 1500,
+        "wires": []
+    },
+    {
+        "id": "e709f83932268b80",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "entregar",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "ENTREGAR",
+        "payloadType": "str",
+        "x": 660,
+        "y": 1540,
+        "wires": [
+            [
+                "ea4c5e31aa8cccaa",
+                "e1f29d86e684679b"
+            ]
+        ]
+    },
+    {
+        "id": "a106ff6513688a4a",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 920,
+        "y": 1700,
+        "wires": []
+    },
+    {
+        "id": "d071783c438c0c8e",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 9",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 880,
+        "y": 1620,
+        "wires": []
+    },
+    {
+        "id": "8c4c8653367f2e86",
+        "type": "inject",
+        "z": "ff57012727d19470",
+        "name": "brazo_down",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0",
+        "topic": "bomax/dispenser/comando",
+        "payload": "brazo_down",
+        "payloadType": "str",
+        "x": 610,
+        "y": 1660,
+        "wires": [
+            [
+                "a106ff6513688a4a",
+                "d071783c438c0c8e"
+            ]
+        ]
+    },
+    {
+        "id": "9d224b273924f332",
+        "type": "mqtt in",
+        "z": "ff57012727d19470",
+        "name": "Sensores Reales (ESP32)",
+        "topic": "bomax/robot/sensores",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "303df39c2e310875",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 230,
+        "y": 280,
+        "wires": [
+            [
+                "96915969dd1e7499",
+                "0348a2a59cf7642f"
+            ]
+        ]
+    },
+    {
+        "id": "52e084cc1c6dd312",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Actualizar Sensor Frontal",
+        "func": "// Guardar distancia real en contexto global\nif (msg.distancia) {\n    global.set(\"distanciaFrontalReal\", msg.distancia);\n    global.set(\"usarDistanciaReal\", true);\n}\nreturn null; // No pasa mensaje, solo actualiza contexto",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 870,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ebd1828493d01952",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "faf4f9d270d9de86",
+        "name": "Configuración de Entorno",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"padding:15px;font-family:Arial,sans-serif;max-width:600px\">\n  <h3 style=\"color:#2c3e50;margin-bottom:20px;font-size:18px\">\n    ⚙️ Configuración del Entorno\n  </h3>\n\n  <div style=\"background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:20px\">\n    <label style=\"font-size:13px;font-weight:bold;color:#2c3e50;display:block;margin-bottom:10px\">\n      Seleccionar Mapa del Robot:\n    </label>\n\n    <select id=\"mapa-selector\"\n      style=\"width:100%;padding:12px;border:2px solid #3498db;border-radius:6px;font-size:14px;background:white;margin-bottom:15px\">\n      <option value=\"pasillo_recto\">🏥 Pasillo Recto — Traumatología</option>\n      <option value=\"pasillo_l\">🔄 Pasillo en L — Pediatría</option>\n      <option value=\"pasillo_bifurcacion\">⑂ Bifurcación — Medicina Interna</option>\n    </select>\n\n    <!-- Botones de acción -->\n    <div style=\"display:flex;gap:10px;margin-top:15px\">\n      <button id=\"btn-guardar\"\n        style=\"flex:1;padding:12px;background:#27ae60;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px\">\n        💾 Guardar Cambios\n      </button>\n\n      <button id=\"btn-logout\"\n        style=\"flex:1;padding:12px;background:#e74c3c;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px\">\n        🚪 Cerrar Sesión\n      </button>\n    </div>\n  </div>\n\n  <!-- Mensaje de confirmación -->\n  <div id=\"confirmacion\"\n    style=\"display:none;background:#d4edda;padding:15px;border-radius:6px;border-left:4px solid #28a745;margin-bottom:15px\">\n    <div style=\"color:#155724;font-weight:bold;margin-bottom:5px\">\n      ✅ Mapa actualizado correctamente\n    </div>\n    <div style=\"color:#155724;font-size:13px\">\n      Entorno: <span id=\"mapa-actual\"></span><br>\n      <small>Visible para todos los operadores</small>\n    </div>\n  </div>\n\n  <!-- Info -->\n  <div style=\"background:#e3f2fd;padding:15px;border-radius:6px;border-left:4px solid #2196f3\">\n    <div style=\"font-size:12px;color:#1976d2;margin-bottom:5px;font-weight:bold\">\n      ℹ️ Información:\n    </div>\n    <div style=\"font-size:13px;color:#1565c0;line-height:1.6\">\n      El mapa seleccionado se aplicará automáticamente al robot y será visible para todos los operadores.\n    </div>\n  </div>\n\n  <script>\n    (function(scope) {\n      // ==========================================\n      // 🔒 VALIDACIÓN DE ACCESO - SOLO SUPERVISOR\n      // ==========================================\n      const auth = JSON.parse(localStorage.getItem('bomax_auth') || '{}');\n      \n      // 1. Verificar si hay sesión activa\n      if (!auth || !auth.rol) {\n        alert('⛔ Acceso denegado. Debe iniciar sesión primero.');\n        window.location.href = '/ui/#!/0';\n        return;\n      }\n      \n      // 2. Verificar rol - SOLO SUPERVISOR puede entrar\n      if (auth.rol !== 'Supervisor') {\n        alert('⛔ Acceso denegado. Solo los Supervisores pueden configurar el entorno.');\n        \n        // Redirigir a su tab correspondiente según su rol real\n        if (auth.rol === 'Admin') {\n          window.location.href = '/ui/#!/3';\n        } else {\n          window.location.href = '/ui/#!/1'; // Operador\n        }\n        return;\n      }\n      // ==========================================\n      \n      // Si pasa la validación, continuar con la funcionalidad normal\n      // Cargar mapa actual\n      const mapaGuardado = localStorage.getItem('bomax_mapa') || 'pasillo_recto';\n      const selector = document.getElementById('mapa-selector');\n      selector.value = mapaGuardado;\n      \n      // Función Guardar Cambios\n      document.getElementById('btn-guardar').onclick = function() {\n        const mapaSeleccionado = selector.value;\n        const textoMapa = selector.options[selector.selectedIndex].text;\n        \n        // Guardar en localStorage\n        localStorage.setItem('bomax_mapa', mapaSeleccionado);\n        \n        // Mostrar confirmación\n        document.getElementById('confirmacion').style.display = 'block';\n        document.getElementById('mapa-actual').textContent = textoMapa;\n        \n        // Enviar a Node-RED\n        scope.send({\n          payload: {\n            accion: 'CAMBIAR_MAPA',\n            mapa: mapaSeleccionado,\n            texto: textoMapa,\n            usuario: auth.usuario,\n            timestamp: new Date().toISOString()\n          }\n        });\n        \n        // Ocultar confirmación después de 3 segundos\n        setTimeout(function() {\n          document.getElementById('confirmacion').style.display = 'none';\n        }, 3000);\n      };\n      \n      // Función Cerrar Sesión\n      document.getElementById('btn-logout').onclick = function() {\n        if (confirm('¿Estás seguro de cerrar sesión?')) {\n          localStorage.removeItem('bomax_auth');\n          window.location.href = '/ui/#!/0';\n        }\n      };\n      \n    })(scope);\n  </script>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1050,
+        "y": 480,
+        "wires": [
+            [
+                "653c481c2489c533"
+            ]
+        ]
+    },
+    {
+        "id": "653c481c2489c533",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Procesar Cambio de Mapa",
+        "func": "const data = msg.payload;\n\nif (data.accion === 'CAMBIAR_MAPA') {\n    // Guardar en contexto global\n    global.set('mapa_actual', data.mapa);\n    global.set('mapa_actual_texto', data.texto);\n    \n    // Log de auditoría\n    const hora = new Date().toLocaleTimeString('es-BO');\n    const log = `${hora} 🔧 ${data.usuario || 'Supervisor'} cambió mapa a: ${data.texto}`;\n    \n    let logs = global.get('log_sistema') || [];\n    logs.unshift(log);\n    if (logs.length > 20) logs = logs.slice(0, 20);\n    global.set('log_sistema', logs);\n    \n    // Publicar por MQTT para el robot\n    return {\n        topic: 'bomax/robot/mapa',\n        payload: {\n            accion: 'CAMBIAR_MAPA',\n            mapa: data.mapa,\n            texto: data.texto,\n            cambiado_por: data.usuario,\n            timestamp: data.timestamp\n        }\n    };\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1240,
+        "y": 520,
+        "wires": [
+            [
+                "1c8bd4f065fbfced"
+            ]
+        ]
+    },
+    {
+        "id": "1c8bd4f065fbfced",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "mapa",
+        "topic": "bomax/robot/mapa",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 1450,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "a2de3c744c240d26",
+        "type": "ui_template",
+        "z": "ff57012727d19470",
+        "group": "1aaa8042c6994bf0",
+        "name": "Base de Datos Admin",
+        "order": 0,
+        "width": "30",
+        "height": "24",
+        "format": "<div style=\"padding:20px;font-family:Arial,sans-serif\">\n    <h3 style=\"color:#2c3e50;margin-bottom:20px;font-size:20px\">\n        📊 Base de Datos de Entregas\n    </h3>\n\n    <!-- Botones de acción -->\n    <div style=\"margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap\">\n        <button ng-click=\"consultarDatos()\"\n            style=\"padding:12px 24px;background:#2980b9;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px\">\n            🔄 Actualizar Datos\n        </button>\n\n        <button ng-click=\"descargarCSV()\"\n            style=\"padding:12px 24px;background:#27ae60;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px\">\n             Descargar CSV\n        </button>\n\n        <button ng-click=\"exportarPDF()\"\n            style=\"padding:12px 24px;background:#8e44ad;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px\">\n            📄 Exportar PDF\n        </button>\n\n        <button ng-click=\"cerrarSesion()\"\n            style=\"padding:12px 24px;background:#e74c3c;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px\">\n            🚪 Cerrar Sesión\n        </button>\n    </div>\n\n    <!-- FILTROS POR FECHA -->\n    <div style=\"background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #3498db\">\n        <div style=\"font-size:14px;color:#2c3e50;font-weight:bold;margin-bottom:10px\"> Filtrar por Fecha</div>\n        <div style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\">\n            <div>\n                <label style=\"font-size:12px;color:#7f8c8d;display:block;margin-bottom:4px\">Desde:</label>\n                <input type=\"date\" ng-model=\"filtro.fechaInicio\"\n                    style=\"padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px\">\n            </div>\n            <div>\n                <label style=\"font-size:12px;color:#7f8c8d;display:block;margin-bottom:4px\">Hasta:</label>\n                <input type=\"date\" ng-model=\"filtro.fechaFin\"\n                    style=\"padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px\">\n            </div>\n            <button ng-click=\"aplicarFiltro()\"\n                style=\"padding:8px 16px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;margin-top:18px\">\n                🔍 Filtrar\n            </button>\n            <button ng-click=\"limpiarFiltro()\"\n                style=\"padding:8px 16px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;margin-top:18px\">\n                ✖ Limpiar\n            </button>\n        </div>\n    </div>\n\n    <!-- Resumen estadístico -->\n    <div id=\"resumen\" style=\"background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px\">\n        <div style=\"font-size:14px;color:#7f8c8d;margin-bottom:10px\">📈 Resumen General</div>\n        <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px\">\n            <div style=\"background:white;padding:12px;border-radius:6px;border-left:4px solid #3498db\">\n                <div style=\"font-size:12px;color:#7f8c8d\">Total Entregas</div>\n                <div style=\"font-size:24px;font-weight:bold;color:#2c3e50\">{{totalEntregas}}</div>\n            </div>\n            <div style=\"background:white;padding:12px;border-radius:6px;border-left:4px solid #27ae60\">\n                <div style=\"font-size:12px;color:#7f8c8d\">Enfermeros Activos</div>\n                <div style=\"font-size:24px;font-weight:bold;color:#2c3e50\">{{totalEnfermeros}}</div>\n            </div>\n            <div style=\"background:white;padding:12px;border-radius:6px;border-left:4px solid #e74c3c\">\n                <div style=\"font-size:12px;color:#7f8c8d\">Última Entrega</div>\n                <div style=\"font-size:14px;font-weight:bold;color:#2c3e50\">{{ultimaEntrega}}</div>\n            </div>\n            <div style=\"background:white;padding:12px;border-radius:6px;border-left:4px solid #9b59b6\">\n                <div style=\"font-size:12px;color:#7f8c8d\">Habitación Más Atendida</div>\n                <div style=\"font-size:16px;font-weight:bold;color:#2c3e50\">{{habTop}}</div>\n            </div>\n        </div>\n    </div>\n\n    <!-- GRÁFICAS -->\n    <div ng-if=\"datosGlobales.length > 0\" style=\"margin-bottom:30px\">\n        <h4 style=\"color:#2c3e50;margin-bottom:15px\"> Estadísticas Visuales</h4>\n        <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:20px\">\n            <div style=\"background:white;padding:15px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1)\">\n                <div style=\"font-size:13px;font-weight:bold;color:#7f8c8d;margin-bottom:10px\">Entregas por Día (últimos 7 días)</div>\n                <canvas id=\"chartDias\" height=\"200\"></canvas>\n            </div>\n            <div style=\"background:white;padding:15px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1)\">\n                <div style=\"font-size:13px;font-weight:bold;color:#7f8c8d;margin-bottom:10px\">Distribución por Enfermero</div>\n                <canvas id=\"chartEnfermeros\" height=\"200\"></canvas>\n            </div>\n            <div style=\"background:white;padding:15px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1)\">\n                <div style=\"font-size:13px;font-weight:bold;color:#7f8c8d;margin-bottom:10px\">Entregas por Habitación</div>\n                <canvas id=\"chartHabitaciones\" height=\"200\"></canvas>\n            </div>\n            <div style=\"background:white;padding:15px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1)\">\n                <div style=\"font-size:13px;font-weight:bold;color:#7f8c8d;margin-bottom:10px\">Top 5 Medicamentos</div>\n                <canvas id=\"chartMedicamentos\" height=\"200\"></canvas>\n            </div>\n        </div>\n    </div>\n\n    <!-- Loading -->\n    <div ng-if=\"cargando\" style=\"text-align:center;padding:30px;color:#2980b9\">\n        <div style=\"font-size:32px\">⏳</div>\n        <div style=\"margin-top:8px\">Cargando datos...</div>\n    </div>\n\n    <!-- Empty state -->\n    <div ng-if=\"!cargando && tablas.length === 0\" style=\"text-align:center;padding:40px;color:#7f8c8d\">\n        <div style=\"font-size:48px;margin-bottom:10px\">📋</div>\n        <div>Haga clic en \"Actualizar Datos\" para cargar la información</div>\n    </div>\n\n    <!-- Tablas por enfermero -->\n    <div ng-repeat=\"grupo in tablas\"\n        style=\"background:white;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1)\">\n\n        <div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:2px solid #3498db\">\n            <div style=\"font-size:16px;font-weight:bold;color:#2c3e50\">\n                👨‍⚕️ {{grupo.enfermero}}\n            </div>\n            <div style=\"background:#3498db;color:white;padding:4px 12px;border-radius:12px;font-size:12px\">\n                {{grupo.entregas.length}} entregas\n            </div>\n        </div>\n\n        <table style=\"width:100%;border-collapse:collapse;font-size:13px\">\n            <thead>\n                <tr style=\"background:#f8f9fa\">\n                    <th style=\"padding:10px;text-align:left;border-bottom:2px solid #dee2e6\">Fecha</th>\n                    <th style=\"padding:10px;text-align:left;border-bottom:2px solid #dee2e6\">Paciente</th>\n                    <th style=\"padding:10px;text-align:left;border-bottom:2px solid #dee2e6\">Habitación</th>\n                    <th style=\"padding:10px;text-align:left;border-bottom:2px solid #dee2e6\">Medicamento</th>\n                    <th style=\"padding:10px;text-align:left;border-bottom:2px solid #dee2e6\">Horario de Entrega</th>\n                    <th style=\"padding:10px;text-align:left;border-bottom:2px solid #dee2e6\">Estado</th>\n                </tr>\n            </thead>\n            <tbody>\n                <tr ng-repeat=\"e in grupo.entregas\" style=\"border-bottom:1px solid #dee2e6\">\n                    <td style=\"padding:10px\">{{e.fecha}}</td>\n                    <td style=\"padding:10px;font-weight:500\">{{e.paciente}}</td>\n                    <td style=\"padding:10px\">{{e.habitacion}}</td>\n                    <td style=\"padding:10px\">{{e.medicamento}}</td>\n                    <td style=\"padding:10px\">\n                        <span style=\"background:#fff3cd;color:#856404;padding:4px 8px;border-radius:4px;font-size:11px\">\n                            ⏰ {{formatearHorario(e.horario)}}\n                        </span>\n                    </td>\n                    <td style=\"padding:10px\">\n                        <span style=\"background:#d4edda;color:#155724;padding:4px 8px;border-radius:4px;font-size:11px\">\n                            {{e.estado}}\n                        </span>\n                    </td>\n                </tr>\n            </tbody>\n        </table>\n    </div>\n\n    <!-- Cargar Chart.js y jsPDF -->\n    <script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js\"></script>\n    <script src=\"https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js\"></script>\n    <script src=\"https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js\"></script>\n\n    <script>\n        (function(scope) {\n            // Validación de acceso - SOLO ADMIN\n            const auth = JSON.parse(localStorage.getItem('bomax_auth') || '{}');\n            if (!auth || !auth.rol) {\n                alert('⛔ Acceso denegado. Debe iniciar sesión primero.');\n                window.location.href = '/ui/#!/0';\n                return;\n            }\n            if (auth.rol !== 'Admin') {\n                alert('⛔ Acceso denegado. Solo los Administradores pueden ver esta sección.');\n                if (auth.rol === 'Supervisor') {\n                    window.location.href = '/ui/#!/2';\n                } else {\n                    window.location.href = '/ui/#!/1';\n                }\n                return;\n            }\n\n            scope.tablas = [];\n            scope.totalEntregas = 0;\n            scope.totalEnfermeros = 0;\n            scope.ultimaEntrega = '--';\n            scope.habTop = '--';\n            scope.cargando = false;\n            scope.datosGlobales = [];\n            scope.filtro = { fechaInicio: '', fechaFin: '' };\n\n            // Variables para las gráficas\n            let charts = {};\n\n            // Formatear horario\n            scope.formatearHorario = function(horario) {\n                if (!horario || horario === 'Inmediato' || horario === 'Inmediata') return 'Inmediato';\n                if (horario.includes('1970-01-01')) {\n                    try {\n                        return new Date(horario).toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit'});\n                    } catch(e) { return horario; }\n                }\n                if (horario.includes(':') && !horario.includes('-')) return horario;\n                try {\n                    const f = new Date(horario);\n                    if (!isNaN(f.getTime())) return f.toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit'});\n                } catch(e) {}\n                return horario;\n            };\n\n            // Consultar datos\n            scope.consultarDatos = function() {\n                scope.cargando = true;\n                scope.send({\n                    payload: {\n                        accion: 'CONSULTAR_INFLUXDB',\n                        fechaInicio: scope.filtro.fechaInicio || null,\n                        fechaFin: scope.filtro.fechaFin || null\n                    }\n                });\n            };\n\n            // Aplicar filtro\n            scope.aplicarFiltro = function() {\n                if (!scope.filtro.fechaInicio && !scope.filtro.fechaFin) {\n                    alert('Seleccione al menos una fecha');\n                    return;\n                }\n                scope.consultarDatos();\n            };\n\n            // Limpiar filtro\n            scope.limpiarFiltro = function() {\n                scope.filtro.fechaInicio = '';\n                scope.filtro.fechaFin = '';\n                scope.consultarDatos();\n            };\n\n            // Cerrar sesión\n            scope.cerrarSesion = function() {\n                localStorage.removeItem('bomax_auth');\n                window.location.href = '/ui/#!/0';\n            };\n\n            // Descargar CSV\n            scope.descargarCSV = function() {\n                if (scope.datosGlobales.length === 0) {\n                    alert('No hay datos. Primero actualice los datos.');\n                    return;\n                }\n                const headers = ['Fecha,Paciente,Habitacion,Medicamento,Enfermero,Horario,Estado'];\n                const rows = scope.datosGlobales.map(d =>\n                    `${d.fecha},${d.paciente},${d.habitacion},\"${d.medicamento}\",${d.enfermero},\"${scope.formatearHorario(d.horario)}\",${d.estado}`\n                );\n                const csv = headers.concat(rows).join('\\n');\n                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });\n                const link = document.createElement('a');\n                link.setAttribute('href', URL.createObjectURL(blob));\n                link.setAttribute('download', `entregas_${new Date().toISOString().split('T')[0]}.csv`);\n                link.style.visibility = 'hidden';\n                document.body.appendChild(link);\n                link.click();\n                document.body.removeChild(link);\n            };\n\n            // Exportar PDF\n            scope.exportarPDF = function() {\n                if (scope.datosGlobales.length === 0) {\n                    alert('No hay datos para exportar');\n                    return;\n                }\n\n                const { jsPDF } = window.jspdf;\n                const doc = new jsPDF('landscape', 'mm', 'a4');\n\n                // Título\n                doc.setFontSize(18);\n                doc.setTextColor(44, 62, 80);\n                doc.text('BoMax - Reporte de Entregas de Medicamentos', 14, 15);\n\n                // Fecha de generación\n                doc.setFontSize(10);\n                doc.setTextColor(127, 140, 141);\n                doc.text('Generado: ' + new Date().toLocaleString('es-BO'), 14, 22);\n\n                // Filtro aplicado\n                if (scope.filtro.fechaInicio || scope.filtro.fechaFin) {\n                    doc.text('Período: ' + (scope.filtro.fechaInicio || 'Inicio') + ' - ' + (scope.filtro.fechaFin || 'Hoy'), 14, 28);\n                }\n\n                // Resumen\n                doc.setFontSize(12);\n                doc.setTextColor(44, 62, 80);\n                doc.text('Resumen:', 14, 38);\n                doc.setFontSize(10);\n                doc.text('Total de entregas: ' + scope.totalEntregas, 14, 44);\n                doc.text('Enfermeros activos: ' + scope.totalEnfermeros, 14, 50);\n                doc.text('Última entrega: ' + scope.ultimaEntrega, 14, 56);\n\n                // Tablas por enfermero\n                let yPos = 65;\n                const porEnfermero = {};\n                scope.datosGlobales.forEach(d => {\n                    const key = d.enfermero || 'Sistema';\n                    if (!porEnfermero[key]) porEnfermero[key] = [];\n                    porEnfermero[key].push(d);\n                });\n\n                Object.keys(porEnfermero).forEach(enfermero => {\n                    if (yPos > 170) {\n                        doc.addPage();\n                        yPos = 20;\n                    }\n\n                    doc.setFontSize(11);\n                    doc.setTextColor(52, 152, 219);\n                    doc.text('Enfermero: ' + enfermero + ' (' + porEnfermero[enfermero].length + ' entregas)', 14, yPos);\n                    yPos += 5;\n\n                    const tableData = porEnfermero[enfermero].map(e => [\n                        e.fecha,\n                        e.paciente,\n                        e.habitacion,\n                        e.medicamento,\n                        scope.formatearHorario(e.horario),\n                        e.estado\n                    ]);\n\n                    doc.autoTable({\n                        startY: yPos,\n                        head: [['Fecha', 'Paciente', 'Habitación', 'Medicamento', 'Horario', 'Estado']],\n                        body: tableData,\n                        theme: 'grid',\n                        headStyles: { fillColor: [52, 152, 219], fontSize: 8 },\n                        bodyStyles: { fontSize: 7 },\n                        margin: { left: 14, right: 14 }\n                    });\n\n                    yPos = doc.lastAutoTable.finalY + 10;\n                });\n\n                doc.save('reporte_entregas_' + new Date().toISOString().split('T')[0] + '.pdf');\n            };\n\n            // Renderizar gráficas\n            function renderizarGraficas(datos) {\n                // Destruir gráficas anteriores\n                Object.values(charts).forEach(c => c.destroy());\n                charts = {};\n\n                if (typeof Chart === 'undefined') {\n                    console.warn('Chart.js no cargado');\n                    return;\n                }\n\n                // 1. Entregas por día (últimos 7 días)\n                const porDia = {};\n                datos.forEach(d => {\n                    const dia = d.fecha.split(',')[0];\n                    porDia[dia] = (porDia[dia] || 0) + 1;\n                });\n                const diasLabels = Object.keys(porDia).slice(-7);\n                const diasData = diasLabels.map(l => porDia[l]);\n\n                charts.dias = new Chart(document.getElementById('chartDias'), {\n                    type: 'bar',\n                    data: {\n                        labels: diasLabels,\n                        datasets: [{\n                            label: 'Entregas',\n                            data: diasData,\n                            backgroundColor: '#3498db'\n                        }]\n                    },\n                    options: { responsive: true, plugins: { legend: { display: false } } }\n                });\n\n                // 2. Distribución por enfermero\n                const porEnf = {};\n                datos.forEach(d => {\n                    const key = d.enfermero || 'Sistema';\n                    porEnf[key] = (porEnf[key] || 0) + 1;\n                });\n                const colores = ['#3498db', '#27ae60', '#e74c3c', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22'];\n\n                charts.enfermeros = new Chart(document.getElementById('chartEnfermeros'), {\n                    type: 'pie',\n                    data: {\n                        labels: Object.keys(porEnf),\n                        datasets: [{\n                            data: Object.values(porEnf),\n                            backgroundColor: colores.slice(0, Object.keys(porEnf).length)\n                        }]\n                    },\n                    options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 } } } } }\n                });\n\n                // 3. Entregas por habitación\n                const porHab = {};\n                datos.forEach(d => {\n                    const key = d.habitacion || 'N/A';\n                    porHab[key] = (porHab[key] || 0) + 1;\n                });\n\n                charts.habitaciones = new Chart(document.getElementById('chartHabitaciones'), {\n                    type: 'bar',\n                    data: {\n                        labels: Object.keys(porHab),\n                        datasets: [{\n                            label: 'Entregas',\n                            data: Object.values(porHab),\n                            backgroundColor: ['#e74c3c', '#3498db', '#27ae60']\n                        }]\n                    },\n                    options: {\n                        indexAxis: 'y',\n                        responsive: true,\n                        plugins: { legend: { display: false } }\n                    }\n                });\n\n                // 4. Top 5 medicamentos\n                const porMed = {};\n                datos.forEach(d => {\n                    const key = d.medicamento || 'No especificado';\n                    porMed[key] = (porMed[key] || 0) + 1;\n                });\n                const medsSorted = Object.entries(porMed).sort((a,b) => b[1]-a[1]).slice(0,5);\n\n                charts.medicamentos = new Chart(document.getElementById('chartMedicamentos'), {\n                    type: 'bar',\n                    data: {\n                        labels: medsSorted.map(m => m[0]),\n                        datasets: [{\n                            label: 'Entregas',\n                            data: medsSorted.map(m => m[1]),\n                            backgroundColor: '#9b59b6'\n                        }]\n                    },\n                    options: { responsive: true, plugins: { legend: { display: false } } }\n                });\n            }\n\n            // Escuchar respuesta de Node-RED\n            scope.$watch('msg', function(msg) {\n                if (!msg || !msg.payload) return;\n                const data = msg.payload;\n\n                if (data.accion === 'DATOS_INFLUXDB' && Array.isArray(data.datos)) {\n                    console.log(\"DATOS RECIBIDOS\", data.datos);\n                    scope.cargando = false;\n                    scope.datosGlobales = data.datos;\n\n                    // Agrupar por enfermero\n                    const porEnfermero = {};\n                    data.datos.forEach(d => {\n                        const key = d.enfermero || 'Sistema';\n                        if (!porEnfermero[key]) porEnfermero[key] = [];\n                        porEnfermero[key].push(d);\n                    });\n\n                    scope.tablas = Object.keys(porEnfermero).map(enf => ({\n                        enfermero: enf,\n                        entregas: porEnfermero[enf]\n                    }));\n\n                    scope.totalEntregas = data.datos.length;\n                    scope.totalEnfermeros = Object.keys(porEnfermero).length;\n\n                    if (data.datos.length > 0) {\n                        scope.ultimaEntrega = data.datos[0].fecha || '--';\n\n                        // Calcular habitación top\n                        const porHab = {};\n                        data.datos.forEach(d => {\n                            const key = d.habitacion || 'N/A';\n                            porHab[key] = (porHab[key] || 0) + 1;\n                        });\n                        const habTopEntry = Object.entries(porHab).sort((a,b) => b[1]-a[1])[0];\n                        scope.habTop = habTopEntry ? habTopEntry[0] + ' (' + habTopEntry[1] + ')' : '--';\n                    }\n\n                    // Renderizar gráficas después de que el DOM se actualice\n                    setTimeout(function() {\n                        renderizarGraficas(data.datos);\n                    }, 500);\n\n                    scope.$applyAsync();\n                }\n            });\n\n        })(scope);\n    </script>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1040,
+        "y": 640,
+        "wires": [
+            [
+                "8c7f9e1eab89eea5"
+            ]
+        ]
+    },
+    {
+        "id": "8c7f9e1eab89eea5",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Consultar InfluxDB Admin",
+        "func": "const data = msg.payload;\n\nif (data.accion === 'CONSULTAR_INFLUXDB') {\n    // Construir rango de fechas dinámico\n    let rangoInicio = '-30d'; // Default: 30 días\n    \n    if (data.fechaInicio) {\n        // Convertir fecha de input a formato RFC3339\n        const fechaIni = new Date(data.fechaInicio + 'T00:00:00Z').toISOString();\n        rangoInicio = fechaIni;\n    }\n    \n    let filtroFecha = '';\n    if (data.fechaFin) {\n        const fechaFin = new Date(data.fechaFin + 'T23:59:59Z').toISOString();\n        filtroFecha = `|> filter(fn: (r) => r[\"_time\"] <= time(v: \"${fechaFin}\"))`;\n    }\n    \n    const query = `from(bucket: \"robot_data\")\n  |> range(start: ${rangoInicio})\n  |> filter(fn: (r) => r[\"_measurement\"] == \"entregas\")\n  ${filtroFecha}\n  |> sort(columns: [\"_time\"], desc: true)`;\n    \n    return {\n        method: 'POST',\n        url: 'http://bomax_influxdb:8086/api/v2/query?org=ucb',\n        headers: {\n            'Authorization': 'Token bomax-token-2026',\n            'Content-Type': 'application/vnd.flux',\n            'Accept': 'application/csv'\n        },\n        payload: query\n    };\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1350,
+        "y": 620,
+        "wires": [
+            [
+                "fe4cc820125e33c3"
+            ]
+        ]
+    },
+    {
+        "id": "fe4cc820125e33c3",
+        "type": "http request",
+        "z": "ff57012727d19470",
+        "name": "",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "http://bomax_influxdb:8086/api/v2/query?org=ucb",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Authorization",
+                "keyValue": "",
+                "valueType": "other",
+                "valueValue": "Token bomax-token-2026"
+            },
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "other",
+                "valueValue": "application/vnd.flux"
+            },
+            {
+                "keyType": "Accept",
+                "keyValue": "",
+                "valueType": "other",
+                "valueValue": "application/csv"
+            }
+        ],
+        "x": 1550,
+        "y": 580,
+        "wires": [
+            [
+                "bc514d1a0ddcdb62",
+                "fd628e05c775ca93"
+            ]
+        ]
+    },
+    {
+        "id": "fd628e05c775ca93",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 10",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1820,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "bc514d1a0ddcdb62",
+        "type": "function",
+        "z": "ff57012727d19470",
+        "name": "Formatear Datos Admin",
+        "func": "// =====================================================\n// FORMATEAR DATOS ADMIN - INFLUXDB 2.0 CSV\n// =====================================================\n\nconst csv = msg.payload;\n\nif (!csv || typeof csv !== \"string\") {\n    node.warn(\"CSV vacío\");\n    return {\n        payload: {\n            accion: \"DATOS_INFLUXDB\",\n            datos: []\n        }\n    };\n}\n\n// -----------------------------------------------------\n// Parser CSV robusto\n// -----------------------------------------------------\nfunction parseCSVLine(line) {\n\n    const result = [];\n\n    let current = \"\";\n    let inQuotes = false;\n\n    for (let i = 0; i < line.length; i++) {\n\n        const c = line[i];\n\n        if (c === '\"') {\n\n            if (\n                inQuotes &&\n                i + 1 < line.length &&\n                line[i + 1] === '\"'\n            ) {\n                current += '\"';\n                i++;\n            } else {\n                inQuotes = !inQuotes;\n            }\n\n        } else if (c === ',' && !inQuotes) {\n\n            result.push(current);\n            current = \"\";\n\n        } else {\n\n            current += c;\n\n        }\n    }\n\n    result.push(current);\n\n    return result;\n}\n\n// -----------------------------------------------------\n// Leer CSV\n// -----------------------------------------------------\n\nconst lines = csv.split(/\\r?\\n/);\n\nlet headers = null;\n\nconst entregas = {};\n\n// -----------------------------------------------------\n// Procesar línea por línea\n// -----------------------------------------------------\n\nfor (const rawLine of lines) {\n\n    if (!rawLine) continue;\n\n    // Saltar metadata\n    if (rawLine.startsWith(\"#\")) continue;\n\n    const cols = parseCSVLine(rawLine);\n\n    // Header de tabla Influx\n    if (\n        cols.length > 3 &&\n        cols.includes(\"_time\") &&\n        cols.includes(\"_field\")\n    ) {\n        headers = cols;\n        continue;\n    }\n\n    if (!headers) continue;\n\n    if (cols.length !== headers.length) continue;\n\n    const row = {};\n\n    headers.forEach((h, i) => {\n        row[h] = cols[i];\n    });\n\n    const timestamp = row._time;\n\n    if (!timestamp) continue;\n\n    if (!entregas[timestamp]) {\n\n        entregas[timestamp] = {\n\n            _time: timestamp,\n\n            paciente: row.paciente || \"\",\n\n            habitacion: row.habitacion || \"\",\n\n            enfermera: row.enfermera || \"\"\n        };\n    }\n\n    // actualizar tags si existen\n    if (row.paciente)\n        entregas[timestamp].paciente = row.paciente;\n\n    if (row.habitacion)\n        entregas[timestamp].habitacion = row.habitacion;\n\n    if (row.enfermera)\n        entregas[timestamp].enfermera = row.enfermera;\n\n    // guardar field\n    if (\n        row._field &&\n        row._value !== undefined\n    ) {\n        entregas[timestamp][row._field] = row._value;\n    }\n}\n\n// -----------------------------------------------------\n// Construir salida final\n// -----------------------------------------------------\n\nconst resultado = [];\n\nfor (const timestamp in entregas) {\n\n    const entrega = entregas[timestamp];\n\n    let jsonData = {};\n\n    // Caso especial:\n    // field \"value\" contiene JSON serializado\n    if (entrega.value) {\n\n        try {\n\n            let txt = entrega.value;\n\n            txt = txt.replace(/^\"|\"$/g, \"\");\n\n            txt = txt.replace(/\"\"/g, '\"');\n\n            jsonData = JSON.parse(txt);\n\n        } catch (err) {\n\n            node.warn(\n                \"JSON inválido en value: \" +\n                err.message\n            );\n        }\n    }\n\n    const enfermeroOriginal =\n        jsonData.encargado ||\n        jsonData.enfermera ||\n        entrega.enfermera ||\n        \"--\";\n\n    // Normalizar nombre\n    let enfermeroLimpio = enfermeroOriginal\n        .replace(/[.,]/g, \"\")\n        .replace(/\\s+/g, \"_\")\n        .replace(/_+/g, \"_\")\n        .replace(/^_/, \"\")\n        .trim();\n\n    // Eliminar registros basura\n    if (\n        enfermeroLimpio === \"--\" ||\n        enfermeroLimpio === \"sgssg\"\n    ){\n        continue;\n    }\n    resultado.push({\n\n        fecha: new Date(timestamp)\n            .toLocaleString(\"es-BO\"),\n\n        fechaRaw: timestamp,\n\n        paciente:\n            jsonData.paciente ||\n            entrega.paciente ||\n            \"--\",\n\n        habitacion:\n            jsonData.habitacion ||\n            entrega.habitacion ||\n            \"--\",\n\n        enfermero: enfermeroLimpio,\n        \n        medicamento:\n            jsonData.medicamento ||\n            entrega.medicamento ||\n            \"--\",\n\n        horario:\n            jsonData.horario ||\n            entrega.horario ||\n            \"--\",\n\n        estado:\n            jsonData.estado ||\n            entrega.estado ||\n            \"ENTREGADA\"\n    });\n}\n\n// -----------------------------------------------------\n// Ordenar más reciente primero\n// -----------------------------------------------------\n\nresultado.sort(\n    (a, b) =>\n        // @ts-ignore\n        new Date(b.fechaRaw) -\n        // @ts-ignore\n        new Date(a.fechaRaw)\n);\n\nnode.warn(\n    \"Entregas encontradas: \" +\n    resultado.length\n);\nmsg.payload = {\n    accion: \"DATOS_INFLUXDB\",\n    datos: resultado\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1830,
+        "y": 640,
+        "wires": [
+            [
+                "a2de3c744c240d26",
+                "98f3d0c724a27f2d"
+            ]
+        ]
+    },
+    {
+        "id": "98f3d0c724a27f2d",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 11",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2080,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "45e6270361188883",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "debug 12",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 600,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "57124882c4aec1dc",
+        "type": "mqtt out",
+        "z": "ff57012727d19470",
+        "name": "bomax_nodered",
+        "topic": "bomax/dispenser/comando",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "303df39c2e310875",
+        "x": 680,
+        "y": 600,
+        "wires": []
+    },
+    {
+        "id": "3e2dce67ff0c8d6b",
+        "type": "debug",
+        "z": "ff57012727d19470",
+        "name": "verificaar",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 900,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "73a66b9d9d6dc767",
+        "type": "ui_spacer",
+        "z": "ff57012727d19470",
+        "name": "spacer",
+        "group": "1aaa8042c6994bf0",
+        "order": 1,
+        "width": 1,
+        "height": 1
+    },
+    {
+        "id": "8b7f815275d653d6",
+        "type": "ui_spacer",
+        "z": "ff57012727d19470",
+        "name": "spacer",
+        "group": "1aaa8042c6994bf0",
+        "order": 1,
+        "width": 1,
+        "height": 1
+    },
+    {
+        "id": "549c079bfb4b32e4",
+        "type": "ui_spacer",
+        "z": "ff57012727d19470",
+        "name": "spacer",
+        "group": "ui_group_mapa",
+        "order": 1,
+        "width": 1,
+        "height": 1
+    },
+    {
+        "id": "e3426a84c3e74971",
+        "type": "ui_spacer",
+        "z": "ff57012727d19470",
+        "name": "spacer",
+        "group": "ui_group_estado",
+        "order": 1,
+        "width": 1,
+        "height": 1
+    },
+    {
+        "id": "6496e8e9c284d072",
+        "type": "ui_spacer",
+        "z": "ff57012727d19470",
+        "name": "spacer",
+        "group": "ui_group_estado",
+        "order": 1,
+        "width": 1,
+        "height": 1
+    },
+    {
+        "id": "ui_group_estado",
+        "type": "ui_group",
+        "name": "Estado del Robot",
+        "tab": "ui_tab_bomax",
+        "order": 1,
+        "disp": true,
+        "width": "22",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "ui_group_mapa",
+        "type": "ui_group",
+        "name": "Mapa del Pasillo ",
+        "tab": "ui_tab_bomax",
+        "order": 3,
+        "disp": true,
+        "width": "17",
+        "collapse": false,
+        "className": "2"
+    },
+    {
+        "id": "ui_group_mision",
+        "type": "ui_group",
+        "name": "Nueva Misión",
+        "tab": "ui_tab_bomax",
+        "order": 4,
+        "disp": true,
+        "width": "10",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "mqtt_broker",
+        "type": "mqtt-broker",
+        "name": "Mosquitto local",
+        "broker": "bomax_mqtt",
+        "port": "1883",
+        "clientid": "nodered_bomax",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "ui_group_login",
+        "type": "ui_group",
+        "name": "Acceso al Sistema",
+        "tab": "ui_tab_login",
+        "order": 1,
+        "disp": false,
+        "width": "6",
+        "collapse": false
+    },
+    {
+        "id": "25121b4edc4ea9c1",
+        "type": "ui_group",
+        "name": "Dashboard",
+        "tab": "ui_tab_bomax",
+        "order": 5,
+        "disp": false,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "e3f3b7e614da17bf",
+        "type": "ui_group",
+        "name": "Alertas",
+        "tab": "ui_tab_bomax",
+        "order": 2,
+        "disp": true,
+        "width": "11",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "303df39c2e310875",
+        "type": "mqtt-broker",
+        "name": "nodered_bomax",
+        "broker": "29d811ffe864444aa0fe55f7224f194c.s1.eu.hivemq.cloud",
+        "port": "8883",
+        "tls": "",
+        "clientid": "nodered_bomax",
+        "autoConnect": true,
+        "usetls": true,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "faf4f9d270d9de86",
+        "type": "ui_group",
+        "name": "Configuracion de Entorno",
+        "tab": "f04b98d09ae8ce2d",
+        "order": 1,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "1aaa8042c6994bf0",
+        "type": "ui_group",
+        "name": "Base de datos ",
+        "tab": "f2742e737daab430",
+        "order": 1,
+        "disp": true,
+        "width": "30",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "ui_tab_bomax",
+        "type": "ui_tab",
+        "name": "Operador",
+        "icon": "dashboard",
+        "order": 2,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "ui_tab_login",
+        "type": "ui_tab",
+        "name": "🔐 Login",
+        "icon": "lock",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "f04b98d09ae8ce2d",
+        "type": "ui_tab",
+        "name": "Supervisor",
+        "icon": "dashboard",
+        "order": 3,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "f2742e737daab430",
+        "type": "ui_tab",
+        "name": "Admin",
+        "icon": "dashboard",
+        "order": 4,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "551e989486aa9f95",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]
